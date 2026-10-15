@@ -1,29 +1,42 @@
 @import 'tailwindcss';
 
+/* Palette A: deep blue, slate, off-white, teal accent. */
 @theme {
-  --font-sans: 'Schibsted Grotesk', system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-sans: 'Inter', system-ui, sans-serif;
 
-  --color-ink: #14161a;
-  --color-ground: #f3f4f0;
-  --color-line: #dddfd8;
-  --color-dash: #b9bcb3;
-  --color-muted: #5a5f66;
-  --color-body: #33373d;
-  --color-accent: #d9f03f;
+  --color-ink: #0f172a;
+  --color-navy: #1e3a5f;
+  --color-ground: #f8fafc;
+  --color-line: #e2e8f0;
+  --color-dash: #cbd5e1;
+  --color-muted: #64748b;
+  --color-body: #475569;
+  --color-strong: #334155;
+
+  --color-teal: #14b8a6;
+  --color-teal-dark: #0f766e;
+  --color-teal-deep: #115e59;
+  --color-teal-soft: #ccfbf1;
+  --color-mint: #e6f4f1;
+  --color-teal-on-navy: #5eead4;
 
   /* Verdict colors differ in lightness as well as hue, and each has its own icon. */
-  --color-holds: #1b45b8;
-  --color-holds-soft: #dce6ff;
-  --color-holds-bar: #8fb0ff;
-  --color-mislead: #8a3c06;
-  --color-mislead-soft: #ffe0bf;
-  --color-mislead-bar: #ffb066;
-  --color-contra: #8a2c0a;
-  --color-contra-bar: #e8703a;
-  --color-unknown: #4e535a;
-  --color-unknown-soft: #e6e7e3;
-  --color-unknown-bar: #8a8f96;
+  --color-holds: #15803d;
+  --color-holds-soft: #dcfce7;
+  --color-holds-bar: #16a34a;
+  --color-holds-on-navy: #4ade80;
+  --color-mislead: #b45309;
+  --color-mislead-soft: #fef3c7;
+  --color-mislead-bar: #d97706;
+  --color-mislead-on-navy: #fbbf24;
+  --color-contra: #b91c1c;
+  --color-contra-soft: #fee2e2;
+  --color-contra-bar: #dc2626;
+  --color-contra-on-navy: #f87171;
+  --color-unknown: #475569;
+  --color-unknown-soft: #f1f5f9;
+  --color-unknown-bar: #94a3b8;
+  --color-unknown-on-navy: #94a3b8;
 }
 
 html,
@@ -41,6 +54,6 @@ body {
 }
 
 :focus-visible {
-  outline: 3px solid var(--color-holds);
+  outline: 3px solid var(--color-teal-dark);
   outline-offset: 2px;
 }
