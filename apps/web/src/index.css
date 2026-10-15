@@ -1,0 +1,46 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Schibsted Grotesk', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --color-ink: #14161a;
+  --color-ground: #f3f4f0;
+  --color-line: #dddfd8;
+  --color-dash: #b9bcb3;
+  --color-muted: #5a5f66;
+  --color-body: #33373d;
+  --color-accent: #d9f03f;
+
+  /* Verdict colors differ in lightness as well as hue, and each has its own icon. */
+  --color-holds: #1b45b8;
+  --color-holds-soft: #dce6ff;
+  --color-holds-bar: #8fb0ff;
+  --color-mislead: #8a3c06;
+  --color-mislead-soft: #ffe0bf;
+  --color-mislead-bar: #ffb066;
+  --color-contra: #8a2c0a;
+  --color-contra-bar: #e8703a;
+  --color-unknown: #4e535a;
+  --color-unknown-soft: #e6e7e3;
+  --color-unknown-bar: #8a8f96;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-holds);
+  outline-offset: 2px;
+}
