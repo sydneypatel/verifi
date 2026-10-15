@@ -70,7 +70,9 @@ export function Home({ text, onTextChange, onSubmit, onOpenHistory, loading, err
         </h1>
 
         <p className="text-[15px] leading-normal text-body">
-          Paste a post from Reddit, StockTwits or X. We check each claim against the company's SEC filings.
+          Paste a post from social media (X, Reddit, etc.).
+          <br/>
+          We'll check the claim against the company's SEC filings.
         </p>
 
         <form

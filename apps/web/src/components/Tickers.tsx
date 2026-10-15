@@ -136,13 +136,13 @@ export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }
             )}
           </section>
         ))}
-
-        <div className="mt-auto flex items-start gap-2.5 rounded-xl bg-mint px-3.5 py-3">
+        {/* coming soon: */}
+        {/* <div className="mt-auto flex items-start gap-2.5 rounded-xl bg-mint px-3.5 py-3">
           <svg width="18" height="18" viewBox="0 0 22 22" fill="none" className="mt-px shrink-0 text-teal-deep" aria-hidden="true">
             <path d="M11 3a5 5 0 0 0-5 5v3.5L4.5 15h13L16 11.5V8a5 5 0 0 0-5-5zM9 18a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <p className="text-[13px] leading-normal text-teal-deep">Coming later: an alert when a company you follow files new results.</p>
-        </div>
+        </div> */}
       </div>
     </>
   );
