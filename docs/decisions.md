@@ -79,6 +79,12 @@ Which period a claim means:
 - **Non-GAAP numbers.** Posts often quote "adjusted" profit. Filings are compared on the
   standard (GAAP) figure, so an adjusted number can show as Contradicted.
 - **Private companies.** No ticker means no filings. Claims about private companies or leaked documents always come back as "can't be checked".
+- **Market and macro data.** Stock prices ("closed down 15.5% at $65.78"), bond prices and
+  yields, and Treasury yields or inflation are not in SEC filings. They need a market data
+  source (prices) and FRED (rates, inflation).
+- **Point-in-time figures.** Backlog (remaining performance obligations), cash and debt are
+  reported as of a date, not over a period. The SEC data has them, but the series builder
+  only reads period figures so far.
 - **Text only.** Screenshots and links are not handled yet.
 - **No accounts, rate limits or history.** Add before sharing the URL widely, since each
   check with an LLM key costs money.

@@ -84,6 +84,14 @@ describe('evaluateRevenueClaim', () => {
     expect(evaluateRevenueClaim(claim({ direction: 'down' }), evidence).verdict).toBe('contradicted');
   });
 
+  it('treats "more than" as a floor', () => {
+    expect(evaluateRevenueClaim(claim({ claimedPercent: 25, bound: 'at_least' }), evidence).verdict).toBe('holds_up');
+    const doubled = evaluateRevenueClaim(claim({ claimedPercent: 100, bound: 'at_least' }), evidence);
+    expect(doubled.verdict).toBe('contradicted');
+    expect(doubled.reason).toContain('The post says more than 100%.');
+    expect(evaluateRevenueClaim(claim({ claimedPercent: 40, bound: 'at_most' }), evidence).verdict).toBe('holds_up');
+  });
+
   it('uses the full-year figure when the post says so', () => {
     expect(evaluateRevenueClaim(claim({ claimedPercent: 28, period: 'year' }), evidence).verdict).toBe('holds_up');
   });

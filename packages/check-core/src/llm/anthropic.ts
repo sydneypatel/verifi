@@ -21,6 +21,7 @@ const FIELDS = {
   claimedAmount: nullable({ type: 'number', description: 'US dollars as a full number. Negative for a loss.' }),
   fiscalYear: nullable({ type: 'integer' }),
   fiscalQuarter: nullable({ type: 'integer', enum: [1, 2, 3, 4] }),
+  bound: nullable({ type: 'string', enum: ['at_least', 'at_most'] }),
 };
 
 const CLAIMS_SCHEMA = {
@@ -58,6 +59,7 @@ List each distinct claim in the post, in the order it appears. For each claim:
 - claimedAmount: for financial_figure only, the amount in US dollars written out as a full number. "$11.5B" is 11500000000. "$42 million" is 42000000. Use a negative number for a loss. Null for every other type.
 - fiscalYear: the year the claim's period refers to, if the post states it ("2025 revenue", "Q2 2026"). Null if not stated.
 - fiscalQuarter: 1, 2, 3 or 4 if the claim names a quarter ("Q2"). Null if not.
+- bound: "at_least" when the post states a floor ("more than doubled", "over $2 billion", "at least 40%"), "at_most" for a ceiling ("under 5%", "less than $1B"). Null when it states a figure.
 
 Do not add claims the post does not make. Do not judge whether a claim is true. If the post makes no claims, return an empty list.`;
 
@@ -90,7 +92,7 @@ export function createAnthropicExtractor(options: AnthropicExtractorOptions): Cl
         },
         body: JSON.stringify({
           model,
-          max_tokens: 3000,
+          max_tokens: 4000,
           system: SYSTEM_PROMPT,
           messages: [{ role: 'user', content: `<post>\n${postText}\n</post>` }],
           output_config: { format: { type: 'json_schema', schema: CLAIMS_SCHEMA } },

@@ -1,7 +1,7 @@
-import type { ClaimType, Direction, ExtractedClaim, Metric, Period, Quarter } from '../types';
+import type { Bound, ClaimType, Direction, ExtractedClaim, Metric, Period, Quarter } from '../types';
 import { CLAIM_TYPES, METRICS } from './types';
 
-const MAX_CLAIMS = 12;
+const MAX_CLAIMS = 20;
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -56,6 +56,9 @@ export function normalizeClaims(raw: unknown): ExtractedClaim[] {
     // "a $42B net loss" must be negative even if the model returned 42B.
     if (amount !== null && metric === 'net_income' && amount > 0 && /\bloss(es)?\b/i.test(quote)) amount = -amount;
 
+    const boundText = asString(row.bound)?.toLowerCase();
+    const bound: Bound | null = boundText === 'at_least' || boundText === 'at_most' ? boundText : null;
+
     const year = asNumber(row.fiscalYear);
     const quarter = asNumber(row.fiscalQuarter);
 
@@ -70,6 +73,7 @@ export function normalizeClaims(raw: unknown): ExtractedClaim[] {
       metric,
       claimedAmount: amount,
       fiscalYear: year !== null && Number.isInteger(year) && year >= 1990 && year <= 2100 ? year : null,
+      bound,
       fiscalQuarter: quarter === 1 || quarter === 2 || quarter === 3 || quarter === 4 ? (quarter as Quarter) : null,
     });
     if (claims.length >= MAX_CLAIMS) break;

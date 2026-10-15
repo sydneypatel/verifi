@@ -65,7 +65,19 @@ export function evaluateRevenueClaim(claim: Claim, evidence: RevenueEvidence): E
   }
 
   const claimed = sign * Math.abs(claim.claimedPercent);
-  const claimedText = formatPercentMagnitude(claimed);
+  const claimedText = `${claim.bound === 'at_least' ? 'more than ' : claim.bound === 'at_most' ? 'less than ' : ''}${formatPercentMagnitude(claimed)}`;
+
+  // "More than doubled": a floor, not a figure. Compare in the claimed direction.
+  if (claim.bound) {
+    const tol = Math.max(TIGHT_POINTS, Math.abs(claimed) * TIGHT_RELATIVE);
+    const actual = sign * primary.percent;
+    const ok = claim.bound === 'at_least' ? actual >= Math.abs(claimed) - tol : actual <= Math.abs(claimed) + tol;
+    if (ok) return { verdict: 'holds_up', reason: actualText };
+    if (within(claimed, primary.percent, LOOSE_POINTS, LOOSE_RELATIVE)) {
+      return { verdict: 'misleading', reason: `Close, but short of what the post says (${claimedText}). ${actualText}` };
+    }
+    return { verdict: 'contradicted', reason: `${actualText} The post says ${claimedText}.` };
+  }
 
   if (within(claimed, primary.percent, TIGHT_POINTS, TIGHT_RELATIVE)) {
     return { verdict: 'holds_up', reason: actualText };

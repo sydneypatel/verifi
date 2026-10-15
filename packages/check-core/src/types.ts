@@ -14,6 +14,8 @@ export type Verdict = 'holds_up' | 'misleading' | 'contradicted' | 'cant_check';
 
 export type Direction = 'up' | 'down';
 export type Period = 'quarter' | 'year';
+/** "more than doubled", "over $2B" = at_least; "under 5%" = at_most. */
+export type Bound = 'at_least' | 'at_most';
 export type Quarter = 1 | 2 | 3 | 4;
 
 /** Which reported number a dollar-figure claim is about. */
@@ -41,6 +43,8 @@ export interface Claim {
   fiscalYear: number | null;
   /** The quarter the post names ("Q2"), if any. */
   fiscalQuarter: Quarter | null;
+  /** Set when the post states a floor or ceiling rather than a figure. */
+  bound: Bound | null;
 }
 
 /** What the LLM (or the rule-based fallback) returns: a claim without an id. */

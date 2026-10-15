@@ -77,6 +77,21 @@ describe('dollar figures: revenue', () => {
   });
 });
 
+describe('dollar figures: floors and named quarters', () => {
+  it('treats "over $150M" as a floor', async () => {
+    expect((await check({ claimedAmount: 150 * M, period: 'year', bound: 'at_least' })).verdict).toBe('holds_up');
+    const result = await check({ claimedAmount: 60 * M, period: 'quarter', bound: 'at_least' });
+    expect(result.verdict).toBe('contradicted');
+    expect(result.reason).toContain('The post says revenue of more than $60M.');
+  });
+
+  it('finds "Q1 revenue" with no year in the most recent Q1', async () => {
+    const result = await check({ claimedAmount: 44 * M, fiscalQuarter: 1 });
+    expect(result.verdict).toBe('holds_up');
+    expect(result.reason).toContain('quarter ended Mar 31, 2026');
+  });
+});
+
 describe('dollar figures: net income', () => {
   it('checks a net loss', async () => {
     const result = await check({ metric: 'net_income', claimedAmount: -6.2 * M, period: 'quarter' });

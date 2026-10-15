@@ -34,7 +34,7 @@ export function Results({ text, result, onBack, onOpenClaim }: ResultsProps) {
         center={
           <>
             <span className="max-w-[260px] truncate text-[15px] font-bold text-navy">{title}</span>
-            <span className="max-w-[260px] truncate text-xs text-muted">{subtitle ?? `${result.claims.length} claims found`}</span>
+            <span className="max-w-[260px] truncate text-xs text-muted">{subtitle ?? `${result.claims.length} ${result.claims.length === 1 ? 'claim' : 'claims'} found`}</span>
           </>
         }
       />

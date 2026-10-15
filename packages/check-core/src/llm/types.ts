@@ -28,4 +28,5 @@ export const EMPTY_CLAIM = {
   claimedAmount: null,
   fiscalYear: null,
   fiscalQuarter: null,
+  bound: null,
 } as const;

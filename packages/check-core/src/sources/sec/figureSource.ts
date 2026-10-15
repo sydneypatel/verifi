@@ -92,6 +92,12 @@ function resolvePeriods(claim: Claim, evidence: FigureEvidence): { targets: Repo
       if (targets.length === 0) return { targets, alternates: [], missing: `Q${claim.fiscalQuarter} ${claim.fiscalYear}` };
       return { targets, alternates: some(latestYear) };
     }
+    if (claim.fiscalQuarter) {
+      // "Q2 revenue" with no year: the most recent quarter with that label,
+      // by the company's fiscal calendar or the calendar year.
+      const named = evidence.quarters.find((q) => q.fiscalQuarter === claim.fiscalQuarter || calendarOf(q).quarter === claim.fiscalQuarter);
+      if (named) return { targets: some(named), alternates: some(latestYear) };
+    }
     return { targets: some(latestQuarter), alternates: some(latestYear) };
   }
 
@@ -125,7 +131,28 @@ export function evaluateFigureClaim(claim: Claim, evidence: FigureEvidence): Eva
 
   const reported = (p: ReportedPeriod) => `${describe(evidence.metric, p.value)} for ${periodWords(p)}`;
   const calculated = (p: ReportedPeriod) => (p.derived ? ' That quarter is calculated as the full year minus the first three quarters.' : '');
-  const claimedText = describe(evidence.metric, claimed);
+  const b = claim.bound === 'at_least' ? 'more than ' : claim.bound === 'at_most' ? 'less than ' : '';
+  const claimedText =
+    evidence.metric === 'revenue'
+      ? `revenue of ${b}${formatUsd(claimed)}`
+      : claimed < 0
+        ? `a net loss of ${b}${formatUsd(-claimed)}`
+        : `net income of ${b}${formatUsd(claimed)}`;
+
+  // "Over $2 billion": a floor or ceiling. Compare magnitudes of the same sign.
+  if (claim.bound) {
+    const meets = (p: ReportedPeriod) =>
+      Math.sign(p.value) === Math.sign(claimed) &&
+      (claim.bound === 'at_least' ? Math.abs(p.value) >= Math.abs(claimed) * (1 - TIGHT) : Math.abs(p.value) <= Math.abs(claimed) * (1 + TIGHT));
+    const ok = targets.find(meets);
+    if (ok) return { verdict: 'holds_up', reason: `The company reported ${describe(evidence.metric, ok.value)} for ${periodWords(ok)}.`, citation: citationFor(evidence, ok) };
+    const p = targets[0]!;
+    return {
+      verdict: 'contradicted',
+      reason: `The company reported ${describe(evidence.metric, p.value)} for ${periodWords(p)}. The post says ${claimedText}.`,
+      citation: citationFor(evidence, p),
+    };
+  }
 
   const hit = targets.find((p) => within(claimed, p.value, TIGHT));
   if (hit) {

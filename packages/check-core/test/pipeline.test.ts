@@ -261,6 +261,25 @@ describe('Anthropic extractor', () => {
 describe('cleanPostText', () => {
   it('strips link markup and X page furniture', () => {
     const raw = "[Miles](https://x.com/b)\n[@b](https://x.com/b)\n·\n[15h](https://x.com/b/status/1)\nBuy now:\n[$INTC](https://x.com/search?q=%24INTC)\n (Intel) → $95";
-    expect(cleanPostText(raw)).toBe('Miles\nBuy now:\n$INTC (Intel) → $95');
+    expect(cleanPostText(raw)).toBe('Buy now:\n$INTC (Intel) → $95');
+  });
+
+  it('rejoins sentences that X splits around inline cashtags and handles', () => {
+    const raw = [
+      ' Wall Street is getting ',
+      '[$CRWV](https://x.com/search?q=%24CRWV)',
+      ' COMPLETELY WRONG.',
+      '',
+      'I went on a show with ',
+      '[@host](https://x.com/host)',
+      ' today. Customers like ',
+      '[$MSFT](https://x.com/search?q=%24MSFT)',
+      ', OpenAI, and ',
+      '[$META](https://x.com/search?q=%24META)',
+      '. The demand is there.',
+    ].join('\n');
+    expect(cleanPostText(raw)).toBe(
+      'Wall Street is getting $CRWV COMPLETELY WRONG.\n\nI went on a show with @host today. Customers like $MSFT, OpenAI, and $META. The demand is there.',
+    );
   });
 });

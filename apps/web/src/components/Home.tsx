@@ -80,9 +80,26 @@ export function Home({ text, onTextChange, onSubmit, onOpenHistory, loading, err
             onSubmit();
           }}
         >
-          <label htmlFor="post" className="text-[13px] font-semibold text-body">
-            Paste a post or claim
-          </label>
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="post" className="text-[13px] font-semibold text-body">
+              Paste a post or claim
+            </label>
+            {text && (
+              <button
+                type="button"
+                onClick={() => {
+                  onTextChange('');
+                  document.getElementById('post')?.focus();
+                }}
+                className="-my-2 flex min-h-11 cursor-pointer items-center gap-1 rounded-lg px-2 text-[13px] font-semibold text-teal-dark"
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                Clear
+              </button>
+            )}
+          </div>
           <textarea
             id="post"
             rows={5}

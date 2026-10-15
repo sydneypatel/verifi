@@ -14,7 +14,7 @@ const REVENUE_PERCENT = new RegExp(
   'i',
 );
 const PERCENT_REVENUE_GROWTH = /(\d+(?:\.\d+)?)\s?%\s+(?:revenue|sales)\s+(growth|increase|decline|drop)/i;
-const REVENUE_MULTIPLE = /\b(?:revenue|revenues|sales)\b[^.!?\n]{0,40}?\b(doubled|tripled|quadrupled)\b/i;
+const REVENUE_MULTIPLE = /\b(?:revenue|revenues|sales)\b[^.!?\n]{0,40}?\b(doubled|tripled|quadrupled|doubling|tripling)\b/i;
 const SHORT_INTEREST = /\bshort interest\b[^.!?\n]{0,60}?(\d+(?:\.\d+)?)\s?%[^.!?\n,;]*/i;
 const PREDICTION = /(?:→|->)\s*\$\d|\b(?:must|strong) buy\b|\$\d+(?:\.\d+)?\s+(?:stock|target|price target|by)\b|\bprice target\b|\bto the moon\b|\bwill (?:hit|reach|double|triple|moon|10x)\b|\bgoing to \$\d+/i;
 
@@ -27,8 +27,14 @@ const NET_THEN_AMOUNT = new RegExp(`\\bnet (loss|income|profit)${LINK}${AMOUNT}`
 const AMOUNT_THEN_NET = new RegExp(`${AMOUNT}\\s+(?:in\\s+)?net (loss|income|profit)\\b`, 'i');
 
 const UNITS: Record<string, number> = { trillion: 1e12, t: 1e12, billion: 1e9, bn: 1e9, b: 1e9, million: 1e6, mn: 1e6, m: 1e6 };
-const MULTIPLES: Record<string, number> = { doubled: 100, tripled: 200, quadrupled: 300 };
+const MULTIPLES: Record<string, number> = { doubled: 100, tripled: 200, quadrupled: 300, doubling: 100, tripling: 200 };
 const DOWN = new RegExp(`^(?:${DOWN_WORDS}|drop)$`, 'i');
+
+const AT_LEAST = /\b(more than|over|at least|above|north of)\s*(?:\$)?\d|more than (doubl|tripl|quadrupl)/i;
+const AT_MOST = /\b(less than|under|at most|below)\s*(?:\$)?\d/i;
+function boundOf(fragment: string): 'at_least' | 'at_most' | null {
+  return AT_LEAST.test(fragment) ? 'at_least' : AT_MOST.test(fragment) ? 'at_most' : null;
+}
 
 function periodOf(sentence: string): 'quarter' | 'year' | null {
   if (/\b(quarter|q[1-4]|qoq)\b/i.test(sentence)) return 'quarter';
@@ -68,14 +74,14 @@ export function createRuleBasedExtractor(): ClaimExtractor {
         const multiple = sentence.match(REVENUE_MULTIPLE);
         if (revenue) {
           const direction: Direction = DOWN.test(revenue[1]!) ? 'down' : 'up';
-          claims.push({ ...base, quote: revenue[0].trim(), type: 'revenue_growth', claimedPercent: Number(revenue[2]), direction, period });
+          claims.push({ ...base, quote: revenue[0].trim(), type: 'revenue_growth', claimedPercent: Number(revenue[2]), direction, period, bound: boundOf(revenue[0]) });
           matched = true;
         } else if (flipped) {
           const direction: Direction = DOWN.test(flipped[2]!) ? 'down' : 'up';
           claims.push({ ...base, quote: flipped[0].trim(), type: 'revenue_growth', claimedPercent: Number(flipped[1]), direction, period });
           matched = true;
         } else if (multiple) {
-          claims.push({ ...base, quote: multiple[0].trim(), type: 'revenue_growth', claimedPercent: MULTIPLES[multiple[1]!.toLowerCase()] ?? null, direction: 'up', period });
+          claims.push({ ...base, quote: multiple[0].trim(), type: 'revenue_growth', claimedPercent: MULTIPLES[multiple[1]!.toLowerCase()] ?? null, direction: 'up', period, bound: boundOf(multiple[0]) });
           matched = true;
         }
 
@@ -83,6 +89,7 @@ export function createRuleBasedExtractor(): ClaimExtractor {
         const figure = (quote: string, metric: Metric, amount: number) => {
           claims.push({
             ...base,
+            bound: boundOf(quote),
             quote: quote.trim(),
             type: 'financial_figure',
             metric,
