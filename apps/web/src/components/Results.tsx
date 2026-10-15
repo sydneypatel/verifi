@@ -1,5 +1,5 @@
 import type { CheckResult } from '@hypecheck/check-core';
-import { segmentPost, summarizePost } from '../post';
+import { allHype, segmentPost, summarizePost, tickersOf, titleOf } from '../post';
 import { BackButton, Chevron, ClaimNumber, Disclaimer, TopBar, VERDICTS, VerdictBadge } from './ui';
 
 interface ResultsProps {
@@ -9,7 +9,9 @@ interface ResultsProps {
   onOpenClaim: (index: number) => void;
 }
 
-function headline({ summary }: CheckResult): { lead: string; rest: string } {
+function headline(result: CheckResult): { lead: string; rest: string } {
+  const { summary } = result;
+  if (allHype(result)) return { lead: 'All hype:', rest: 'predictions only, no facts to check.' };
   if (summary.total === 0) return { lead: 'No claims', rest: 'found in this post.' };
   if (summary.checkable === 0) return { lead: 'Nothing here', rest: 'can be checked yet.' };
   if (summary.checkable === 1) {
@@ -22,7 +24,8 @@ export function Results({ text, result, onBack, onOpenClaim }: ResultsProps) {
   const { lead, rest } = headline(result);
   const segments = segmentPost(text, result.claims);
   const summary = summarizePost(result);
-  const title = result.ticker ? `${result.ticker}${result.entityName ? ` · ${result.entityName}` : ''}` : result.entityName ?? 'Results';
+  const { title, subtitle } = titleOf(result);
+  const multi = tickersOf(result).length > 1;
 
   return (
     <>
@@ -31,7 +34,7 @@ export function Results({ text, result, onBack, onOpenClaim }: ResultsProps) {
         center={
           <>
             <span className="max-w-[260px] truncate text-[15px] font-bold text-navy">{title}</span>
-            <span className="text-xs text-muted">{result.claims.length} claims found</span>
+            <span className="max-w-[260px] truncate text-xs text-muted">{subtitle ?? `${result.claims.length} claims found`}</span>
           </>
         }
       />
@@ -86,6 +89,9 @@ export function Results({ text, result, onBack, onOpenClaim }: ResultsProps) {
                   <span className="flex items-center gap-2">
                     <span className="flex h-5 min-w-5 items-center justify-center rounded bg-navy px-1 text-[11px] font-bold text-white">{index + 1}</span>
                     <VerdictBadge verdict={c.verdict} />
+                    {multi && c.claim.ticker && (
+                      <span className="ml-auto rounded bg-line px-1.5 py-0.5 text-[11px] font-extrabold tracking-wide text-navy">{c.claim.ticker}</span>
+                    )}
                   </span>
                   <span className="text-[15px] leading-snug font-semibold">"{c.claim.quote}"</span>
                   <span className="text-[13px] leading-snug text-body">{c.reason}</span>

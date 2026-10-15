@@ -42,6 +42,29 @@ export function segmentPost(text: string, claims: CheckedClaim[]): Segment[] {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** Every stock a check is about. Older saved checks only have `ticker`. */
+export function tickersOf(result: CheckResult): string[] {
+  if (Array.isArray(result.tickers)) return result.tickers;
+  return result.ticker ? [result.ticker] : [];
+}
+
+/** "AAPL · Apple Inc.", or "5 stocks" for a multi-stock post. */
+export function titleOf(result: CheckResult): { title: string; subtitle: string | null } {
+  const tickers = tickersOf(result);
+  if (tickers.length > 1) {
+    const shown = tickers.slice(0, 4).join(', ');
+    return { title: `${tickers.length} stocks`, subtitle: tickers.length > 4 ? `${shown} +${tickers.length - 4}` : shown };
+  }
+  const t = tickers[0] ?? null;
+  if (t) return { title: result.entityName ? `${t} · ${result.entityName}` : t, subtitle: null };
+  return { title: result.entityName ?? 'Results', subtitle: null };
+}
+
+/** True when every claim is a prediction or opinion: hype with nothing to check. */
+export function allHype(result: CheckResult): boolean {
+  return result.claims.length > 0 && result.claims.every((c) => c.claim.type === 'prediction' || c.claim.type === 'opinion');
+}
+
 /** A plain-language wrap-up of the post, built from the verdicts. No LLM. */
 export function summarizePost(result: CheckResult): string[] {
   const count = (v: CheckedClaim['verdict']) => result.claims.filter((c) => c.verdict === v).length;
@@ -49,10 +72,22 @@ export function summarizePost(result: CheckResult): string[] {
   const misleading = count('misleading');
   const contradicted = count('contradicted');
   const cant = count('cant_check');
-  const subject = (result.entityName ?? result.ticker ?? 'this company').replace(/\.$/, '');
+  const tickers = tickersOf(result);
+  const subject =
+    tickers.length > 1
+      ? `${tickers.length} stocks (${tickers.join(', ')})`
+      : (result.entityName ?? result.ticker ?? 'this company').replace(/\.$/, '');
 
   if (result.claims.length === 0) {
     return ['This post makes no specific factual claims, so there is nothing to check against filings.'];
+  }
+
+  if (allHype(result)) {
+    return [
+      `This post makes ${plural(result.claims.length, 'claim', 'claims')} about ${subject}, and every one is a price target, buy call or prediction.`,
+      'None of them is a fact that a filing can confirm, and the post gives no evidence for any of the targets.',
+      'Treat it as an opinion, not as research.',
+    ];
   }
 
   const lines: string[] = [];

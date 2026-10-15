@@ -1,6 +1,7 @@
 import type { EvidenceCache } from './cache';
 import type { ClaimExtractor } from './llm/types';
 import type { EvidenceSource } from './sources/types';
+import { cleanPostText } from './text';
 import type { CheckResult, CheckedClaim, Claim, ClaimType, Evidence } from './types';
 
 // Shown when a claim is factual but no data source covers its type yet.
@@ -28,7 +29,7 @@ export class InputError extends Error {}
  * Clients send text in and render the CheckResult that comes out.
  */
 export async function checkPost(postText: string, deps: CheckDeps): Promise<CheckResult> {
-  const text = postText.trim();
+  const text = cleanPostText(postText);
   if (!text) throw new InputError('Paste a post to check.');
   if (text.length > MAX_POST_LENGTH) {
     throw new InputError(`That post is too long. The limit is ${MAX_POST_LENGTH} characters.`);
@@ -36,14 +37,19 @@ export async function checkPost(postText: string, deps: CheckDeps): Promise<Chec
 
   const extracted = await deps.extractor.extractClaims(text);
 
-  // A post is usually about one stock; claims that do not name it inherit it.
-  const postTicker = extracted.find((c) => c.ticker)?.ticker ?? null;
-  const postCompany = extracted.find((c) => c.company)?.company ?? null;
+  // Claims that name no stock inherit the post's stock, but only when the
+  // post is about exactly one. In a multi-stock post a guess could be wrong.
+  const tickers = [...new Set(extracted.map((c) => c.ticker).filter((t): t is string => Boolean(t)))];
+  const companies = [...new Set(extracted.map((c) => c.company).filter((t): t is string => Boolean(t)))];
+  const onlyTicker = tickers.length === 1 ? tickers[0]! : null;
+  const onlyCompany = companies.length === 1 ? companies[0]! : null;
+  const postTicker = tickers[0] ?? null;
+  const postCompany = companies[0] ?? null;
   const claims: Claim[] = extracted.map((c, i) => ({
     ...c,
     id: `c${i + 1}`,
-    ticker: c.ticker ?? postTicker,
-    company: c.company ?? postCompany,
+    ticker: c.ticker ?? onlyTicker,
+    company: c.company ?? onlyCompany,
   }));
 
   // Several claims about one company share a single fetch within this check.
@@ -68,7 +74,7 @@ export async function checkPost(postText: string, deps: CheckDeps): Promise<Chec
   const checkOne = async (claim: Claim): Promise<CheckedClaim> => {
     const cant = (reason: string): CheckedClaim => ({ claim, verdict: 'cant_check', reason, evidence: null });
 
-    if (claim.type === 'prediction') return cant('A projection or plan, not a fact to verify.');
+    if (claim.type === 'prediction') return cant('A prediction or price target, not a fact to verify.');
     if (claim.type === 'opinion') return cant('An opinion, not a fact to verify.');
 
     // Without a ticker there are no filings to look up. This is the usual
@@ -100,7 +106,8 @@ export async function checkPost(postText: string, deps: CheckDeps): Promise<Chec
 
   return {
     ticker: postTicker,
-    entityName: checked.find((c) => c.evidence)?.evidence?.entityName ?? postCompany,
+    tickers,
+    entityName: tickers.length > 1 ? null : checked.find((c) => c.evidence)?.evidence?.entityName ?? postCompany,
     claims: checked,
     summary: {
       total: checked.length,

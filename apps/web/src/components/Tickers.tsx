@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { tickersOf } from '../post';
 import type { HistoryEntry } from '../storage';
 import { TopBar, VerdictBadge } from './ui';
 
@@ -25,12 +26,12 @@ export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }
   const rows = new Map<string, TickerRow>();
   for (const t of followed) rows.set(t, { ticker: t, name: null, checks: [], following: true });
   for (const e of entries) {
-    const t = e.result.ticker;
-    if (!t) continue;
-    const row = rows.get(t) ?? { ticker: t, name: null, checks: [], following: false };
-    row.name ??= e.result.entityName;
-    row.checks.push(e);
-    rows.set(t, row);
+    for (const t of tickersOf(e.result)) {
+      const row = rows.get(t) ?? { ticker: t, name: null, checks: [], following: false };
+      row.name ??= e.result.claims.find((c) => c.claim.ticker === t && c.evidence)?.evidence?.entityName ?? (tickersOf(e.result).length === 1 ? e.result.entityName : null);
+      row.checks.push(e);
+      rows.set(t, row);
+    }
   }
   const list = [...rows.values()].sort((a, b) => b.checks.length - a.checks.length || a.ticker.localeCompare(b.ticker));
 
@@ -115,10 +116,10 @@ export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }
 
             {row.checks.length > 0 && (
               <div className="flex flex-col">
-                <h3 className="pb-1 text-xs font-bold tracking-wider text-muted">YOUR CHECKED CLAIMS</h3>
+                <h3 className="pb-1 text-xs font-bold tracking-wider text-muted">CLAIMS YOU'VE CHECKED</h3>
                 {row.checks
                   .flatMap((e) => e.result.claims.map((c, index) => ({ e, c, index })))
-                  .filter(({ c }) => c.verdict !== 'cant_check')
+                  .filter(({ c }) => c.claim.ticker === row.ticker)
                   .slice(0, 4)
                   .map(({ e, c, index }) => (
                     <button

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { cleanPostText } from '@hypecheck/check-core';
 import { checkPost, getMode, type Mode } from './api';
 import { History } from './components/History';
 import { Home } from './components/Home';
@@ -47,8 +48,9 @@ export function App() {
     setLoading(true);
     setError(null);
     try {
-      const result = await checkPost(text);
-      const entry = newEntry(text.trim(), result);
+      const cleaned = cleanPostText(text);
+      const result = await checkPost(cleaned);
+      const entry = newEntry(cleaned, result);
       setHistory((h) => [entry, ...h]);
       setView({ name: 'results', entryId: entry.id, from: 'check' });
     } catch (err) {

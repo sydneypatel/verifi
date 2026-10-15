@@ -11,4 +11,5 @@ export { summarizeRevenue } from './sources/sec/revenueFacts';
 export { createSecRevenueSource, evaluateRevenueClaim } from './sources/sec/revenueSource';
 export { createSecFigureSource, evaluateFigureClaim } from './sources/sec/figureSource';
 export { buildSeries } from './sources/sec/series';
+export { cleanPostText } from './text';
 export { formatDate, formatUsd, formatSignedPercent } from './format';

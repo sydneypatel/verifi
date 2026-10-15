@@ -46,10 +46,10 @@ List each distinct claim in the post, in the order it appears. For each claim:
   - financial_figure: a dollar amount the company is said to have already reported: revenue of $11.5B, a $42B net loss, cash, debt, profit.
   - short_interest: how much of the stock is sold short.
   - corporate_event: a deal, contract, approval, filing, buyback or similar event said to have happened.
-  - prediction: anything about the future: a price target, a forecast, guidance, planned spending, a target or expected valuation.
+  - prediction: anything about the future or a call to act: a price target, a buy or sell rating ("Strong Buy"), a forecast, guidance, planned spending, a target or expected valuation.
   - opinion: hype, sentiment, or the poster's own position ("I'm all in").
   - other: any other factual claim.
-- ticker: the ticker this claim is about. Use the cashtag in the post if there is one. If the post names a publicly listed company without a ticker and you are confident of its ticker, use it. Otherwise null. Never guess a ticker for a private company.
+- ticker: the ticker this claim is about. Posts often name several stocks: give each claim the ticker of the stock that claim is about, never the post's first stock by default. Use the cashtag in the post if there is one. If the post names a publicly listed company without a ticker and you are confident of its ticker, use it. Otherwise null. Never guess a ticker for a private company.
 - company: the company this claim is about, as the post names it. Null if the post names none.
 - claimedPercent: for revenue_growth and short_interest, the percentage stated, as a positive number. "doubled" is 100, "tripled" is 200. Null if no percentage.
 - direction: up or down, for claims about a change. Otherwise null.

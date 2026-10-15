@@ -122,7 +122,10 @@ export interface CheckedClaim {
 }
 
 export interface CheckResult {
+  /** The first stock the post names. */
   ticker: string | null;
+  /** Every stock the post's claims are about, in order. Posts often name several. */
+  tickers: string[];
   entityName: string | null;
   claims: CheckedClaim[];
   summary: {

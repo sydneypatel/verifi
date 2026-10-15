@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { tickersOf, titleOf } from '../post';
 import type { HistoryEntry } from '../storage';
 import { Chevron, TopBar, VERDICTS } from './ui';
 
@@ -28,7 +29,7 @@ export function History({ entries, onOpen, onClear }: HistoryProps) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return entries;
-    return entries.filter((e) => [e.text, e.result.ticker ?? '', e.result.entityName ?? ''].some((s) => s.toLowerCase().includes(q)));
+    return entries.filter((e) => [e.text, ...tickersOf(e.result), e.result.entityName ?? ''].some((s) => s.toLowerCase().includes(q)));
   }, [entries, query]);
 
   const groups: { day: string; items: HistoryEntry[] }[] = [];
@@ -101,7 +102,7 @@ export function History({ entries, onOpen, onClear }: HistoryProps) {
               >
                 <span className="flex min-w-0 flex-1 flex-col gap-2">
                   <span className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-extrabold tracking-wide text-navy">{e.result.ticker ?? e.result.entityName ?? 'Post'}</span>
+                    <span className="text-sm font-extrabold tracking-wide text-navy">{titleOf(e.result).subtitle ?? e.result.ticker ?? e.result.entityName ?? 'Post'}</span>
                     <span className="text-xs text-muted">
                       {new Date(e.savedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                     </span>

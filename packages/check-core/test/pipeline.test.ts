@@ -14,6 +14,7 @@ import {
   type FetchLike,
 } from '../src';
 import { DEMO_POST, createFixtureFetch } from '../src/fixtures';
+import { cleanPostText } from '../src/text';
 
 function deps(fetchImpl: FetchLike = createFixtureFetch()) {
   const sec = new SecClient({ userAgent: 'test test@example.com', fetch: fetchImpl });
@@ -81,7 +82,7 @@ describe('checkPost', () => {
     // The second claim names no company and inherits the post's.
     expect(result.claims[0]!.reason).toContain('No stock ticker found for Acme AI');
     expect(result.claims[1]!.reason).toContain('No stock ticker found for Acme AI');
-    expect(result.claims[2]!.reason).toBe('A projection or plan, not a fact to verify.');
+    expect(result.claims[2]!.reason).toBe('A prediction or price target, not a fact to verify.');
     expect(result.summary).toEqual({ total: 3, checkable: 0, holdsUp: 0 });
   });
 
@@ -116,6 +117,44 @@ describe('checkPost', () => {
     const result = await checkPost('post', { ...deps(), extractor });
     expect(result.claims[0]).toMatchObject({ verdict: 'cant_check', reason: expect.stringContaining("doesn't say how revenue changed") });
     expect(result.claims[1]).toMatchObject({ verdict: 'cant_check', reason: 'HypeCheck can only check revenue and net income figures so far.' });
+  });
+
+  it('keeps each claim on its own stock in a multi-stock post', async () => {
+    const post = [
+      "[Miles](https://x.com/someone)",
+      "@someone",
+      "·",
+      "15h",
+      "I'll only say it once. This might be the fastest way to hit $1 million by the end of 2027:",
+      "[$INTC](https://x.com/search?q=%24INTC)",
+      " (Intel) → $95 Must buy",
+      "[$TSLA](https://x.com/search?q=%24TSLA)",
+      " (Tesla) → $360 Strong Buy",
+      "[$TGSR](https://x.com/search?q=%24TGSR)",
+      " revenue is up 300% this quarter",
+    ].join("\n");
+    const result = await checkPost(post, deps());
+
+    expect(result.tickers).toEqual(['INTC', 'TSLA', 'TGSR']);
+    expect(result.entityName).toBeNull();
+    expect(result.claims.map((c) => [c.claim.ticker, c.claim.type, c.verdict])).toEqual([
+      ['INTC', 'prediction', 'cant_check'],
+      ['TSLA', 'prediction', 'cant_check'],
+      ['TGSR', 'revenue_growth', 'contradicted'],
+    ]);
+  });
+
+  it('does not guess a stock for a claim in a multi-stock post', async () => {
+    const extractor: ClaimExtractor = {
+      name: 'stub',
+      extractClaims: async () => [
+        { ...EMPTY_CLAIM, quote: '$AAA to the moon', type: 'prediction', ticker: 'AAA' },
+        { ...EMPTY_CLAIM, quote: '$BBB too', type: 'prediction', ticker: 'BBB' },
+        { ...EMPTY_CLAIM, quote: 'revenue is up 300%', type: 'revenue_growth', claimedPercent: 300, direction: 'up' },
+      ],
+    };
+    const result = await checkPost('post', { ...deps(), extractor });
+    expect(result.claims[2]).toMatchObject({ verdict: 'cant_check', reason: "The post doesn't say which company this is about." });
   });
 
   it('returns an empty result for a post with no claims', async () => {
@@ -216,5 +255,12 @@ describe('Anthropic extractor', () => {
     const fetchMock = vi.fn(async () => ({ ok: false, status: 401, json: async () => ({ error: { message: 'invalid x-api-key' } }) }));
     const extractor = createAnthropicExtractor({ apiKey: 'bad', fetch: fetchMock as unknown as typeof fetch });
     await expect(extractor.extractClaims('x')).rejects.toThrow('invalid x-api-key');
+  });
+});
+
+describe('cleanPostText', () => {
+  it('strips link markup and X page furniture', () => {
+    const raw = "[Miles](https://x.com/b)\n[@b](https://x.com/b)\n·\n[15h](https://x.com/b/status/1)\nBuy now:\n[$INTC](https://x.com/search?q=%24INTC)\n (Intel) → $95";
+    expect(cleanPostText(raw)).toBe('Miles\nBuy now:\n$INTC (Intel) → $95');
   });
 });

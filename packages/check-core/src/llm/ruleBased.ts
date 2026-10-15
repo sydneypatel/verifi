@@ -16,7 +16,7 @@ const REVENUE_PERCENT = new RegExp(
 const PERCENT_REVENUE_GROWTH = /(\d+(?:\.\d+)?)\s?%\s+(?:revenue|sales)\s+(growth|increase|decline|drop)/i;
 const REVENUE_MULTIPLE = /\b(?:revenue|revenues|sales)\b[^.!?\n]{0,40}?\b(doubled|tripled|quadrupled)\b/i;
 const SHORT_INTEREST = /\bshort interest\b[^.!?\n]{0,60}?(\d+(?:\.\d+)?)\s?%[^.!?\n,;]*/i;
-const PREDICTION = /\$\d+(?:\.\d+)?\s+(?:stock|target|price target|by)\b|\bprice target\b|\bto the moon\b|\bwill (?:hit|reach|double|triple|moon|10x)\b|\bgoing to \$\d+/i;
+const PREDICTION = /(?:→|->)\s*\$\d|\b(?:must|strong) buy\b|\$\d+(?:\.\d+)?\s+(?:stock|target|price target|by)\b|\bprice target\b|\bto the moon\b|\bwill (?:hit|reach|double|triple|moon|10x)\b|\bgoing to \$\d+/i;
 
 // "$11.5B", "$42 million". Captures the number and the unit.
 const AMOUNT = '\\$(\\d+(?:\\.\\d+)?)\\s?(trillion|billion|million|bn|mn|[TBM])\\b';
@@ -45,16 +45,18 @@ export function createRuleBasedExtractor(): ClaimExtractor {
     name: 'rule-based',
 
     async extractClaims(postText: string): Promise<ExtractedClaim[]> {
-      const ticker = normalizeTicker(postText.match(/\$([A-Za-z]{1,5})\b/)?.[1]);
+      const cashtags = [...new Set([...postText.matchAll(/\$([A-Za-z]{1,5})\b/g)].map((m) => normalizeTicker(m[1])).filter(Boolean))];
+      const postTicker = cashtags.length === 1 ? cashtags[0]! : null;
       const sentences = postText
         .split(/(?<=[.!?])\s+|\n+/)
         .map((s) => s.trim())
         .filter(Boolean);
 
       const claims: ExtractedClaim[] = [];
-      const base = { ...EMPTY_CLAIM, ticker };
 
       for (const sentence of sentences) {
+        // A sentence's own cashtag wins; otherwise the post's, if it names only one.
+        const base = { ...EMPTY_CLAIM, ticker: normalizeTicker(sentence.match(/\$([A-Za-z]{1,5})\b/)?.[1]) ?? postTicker };
         let matched = false;
         const period = periodOf(sentence);
         const year = sentence.match(/\b(20\d{2})\b/)?.[1];
