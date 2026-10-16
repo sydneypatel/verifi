@@ -92,6 +92,10 @@ export function App() {
       <History
         entries={history}
         onOpen={(id) => setView({ name: 'results', entryId: id, from: 'history' })}
+        onDelete={(id) => setHistory((h) => h.filter((e) => e.id !== id))}
+        onRestore={(restored, index) =>
+          setHistory((h) => (h.some((e) => e.id === restored.id) ? h : [...h.slice(0, index), restored, ...h.slice(index)]))
+        }
         onClear={() => setHistory([])}
       />
     );

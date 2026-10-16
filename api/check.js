@@ -40,6 +40,22 @@ var NOT_BUILT_YET = {
 var MAX_POST_LENGTH = 6e3;
 var InputError = class extends Error {
 };
+var DATED_TYPES = ["financial_figure", "revenue_growth"];
+var OWN_PERIOD = /\b(?:fy\s?'?\d{2,4}|q[1-4]|20\d\d|quarter|year|annual|annually|ttm|trailing|ytd|month|week|today|yesterday|recently|now|currently)\b/i;
+function sharedPostPeriod(claims) {
+  const dated = claims.filter((c) => DATED_TYPES.includes(c.type) && c.fiscalYear !== null);
+  if (dated.length === 0) return null;
+  const first = dated[0];
+  const same = dated.every((c) => c.fiscalYear === first.fiscalYear && c.fiscalQuarter === first.fiscalQuarter);
+  if (!same) return null;
+  return { fiscalYear: first.fiscalYear, fiscalQuarter: first.fiscalQuarter, period: first.period ?? (first.fiscalQuarter ? "quarter" : "year") };
+}
+function borrowsPeriod(c) {
+  return DATED_TYPES.includes(c.type) && c.fiscalYear === null && c.fiscalQuarter === null && !OWN_PERIOD.test(c.quote);
+}
+function periodLabel(p) {
+  return p.fiscalQuarter ? `Q${p.fiscalQuarter} ${p.fiscalYear}` : `FY${p.fiscalYear}`;
+}
 async function checkPost(postText, deps) {
   const text = cleanPostText(postText);
   if (!text) throw new InputError("Paste a post to check.");
@@ -53,12 +69,19 @@ async function checkPost(postText, deps) {
   const onlyCompany = companies.length === 1 ? companies[0] : null;
   const postTicker = tickers[0] ?? null;
   const postCompany = companies[0] ?? null;
-  const claims = extracted.map((c, i) => ({
-    ...c,
-    id: `c${i + 1}`,
-    ticker: c.ticker ?? onlyTicker,
-    company: c.company ?? onlyCompany
-  }));
+  const postPeriod = sharedPostPeriod(extracted);
+  const borrowed = /* @__PURE__ */ new Set();
+  const claims = extracted.map((c, i) => {
+    const id = `c${i + 1}`;
+    const claim = { ...c, id, ticker: c.ticker ?? onlyTicker, company: c.company ?? onlyCompany };
+    if (postPeriod && borrowsPeriod(c)) {
+      borrowed.add(id);
+      claim.fiscalYear = postPeriod.fiscalYear;
+      claim.fiscalQuarter = postPeriod.fiscalQuarter;
+      claim.period = postPeriod.period;
+    }
+    return claim;
+  });
   const inFlight = /* @__PURE__ */ new Map();
   const fetchEvidence = async (source, claim) => {
     const key = source.cacheKey(claim);
@@ -89,7 +112,8 @@ async function checkPost(postText, deps) {
       const evidence = await fetchEvidence(source, claim);
       if (!evidence) return cant(`No filing data found for ${claim.ticker}.`);
       const { verdict, reason, citation } = source.evaluate(claim, evidence);
-      return { claim, verdict, reason, evidence: citation ? { ...evidence, citation } : evidence };
+      const fullReason = borrowed.has(claim.id) && postPeriod && verdict !== "cant_check" ? `${reason} The post names ${periodLabel(postPeriod)} earlier, so this figure is checked against that period.` : reason;
+      return { claim, verdict, reason: fullReason, evidence: citation ? { ...evidence, citation } : evidence };
     } catch {
       return cant("Couldn't reach the data source. Try again in a minute.");
     }

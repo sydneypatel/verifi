@@ -2,7 +2,7 @@ import type { EvidenceCache } from './cache';
 import type { ClaimExtractor } from './llm/types';
 import type { EvidenceSource } from './sources/types';
 import { cleanPostText } from './text';
-import type { CheckResult, CheckedClaim, Claim, ClaimType, Evidence } from './types';
+import type { CheckResult, CheckedClaim, Claim, ClaimType, Evidence, ExtractedClaim, Period, Quarter } from './types';
 
 // Shown when a claim is factual but no data source covers its type yet.
 const NOT_BUILT_YET: Partial<Record<ClaimType, string>> = {
@@ -20,6 +20,42 @@ export interface CheckDeps {
 }
 
 export class InputError extends Error {}
+
+// Claim types whose check depends on which year or quarter is meant.
+const DATED_TYPES: ClaimType[] = ['financial_figure', 'revenue_growth'];
+
+// Words that mean the quote picks its own period, so it must not borrow one.
+const OWN_PERIOD = /\b(?:fy\s?'?\d{2,4}|q[1-4]|20\d\d|quarter|year|annual|annually|ttm|trailing|ytd|month|week|today|yesterday|recently|now|currently)\b/i;
+
+interface PostPeriod {
+  fiscalYear: number;
+  fiscalQuarter: Quarter | null;
+  period: Period | null;
+}
+
+/**
+ * "$NVDA made $130B in FY2025 while $MSFT made over $280B": the second figure
+ * means FY2025 too, but the extractor gives it no year, and a source then
+ * checks it against the latest year instead. When every dated figure in the
+ * post names the same period, undated figures borrow it. If the post names
+ * two different periods, nothing is borrowed, since a guess could be wrong.
+ */
+export function sharedPostPeriod(claims: ExtractedClaim[]): PostPeriod | null {
+  const dated = claims.filter((c) => DATED_TYPES.includes(c.type) && c.fiscalYear !== null);
+  if (dated.length === 0) return null;
+  const first = dated[0]!;
+  const same = dated.every((c) => c.fiscalYear === first.fiscalYear && c.fiscalQuarter === first.fiscalQuarter);
+  if (!same) return null;
+  return { fiscalYear: first.fiscalYear!, fiscalQuarter: first.fiscalQuarter, period: first.period ?? (first.fiscalQuarter ? 'quarter' : 'year') };
+}
+
+function borrowsPeriod(c: ExtractedClaim): boolean {
+  return DATED_TYPES.includes(c.type) && c.fiscalYear === null && c.fiscalQuarter === null && !OWN_PERIOD.test(c.quote);
+}
+
+function periodLabel(p: PostPeriod): string {
+  return p.fiscalQuarter ? `Q${p.fiscalQuarter} ${p.fiscalYear}` : `FY${p.fiscalYear}`;
+}
 
 /**
  * The whole product in one function:
@@ -45,12 +81,21 @@ export async function checkPost(postText: string, deps: CheckDeps): Promise<Chec
   const onlyCompany = companies.length === 1 ? companies[0]! : null;
   const postTicker = tickers[0] ?? null;
   const postCompany = companies[0] ?? null;
-  const claims: Claim[] = extracted.map((c, i) => ({
-    ...c,
-    id: `c${i + 1}`,
-    ticker: c.ticker ?? onlyTicker,
-    company: c.company ?? onlyCompany,
-  }));
+  const postPeriod = sharedPostPeriod(extracted);
+
+  // Claim ids whose year or quarter came from elsewhere in the post.
+  const borrowed = new Set<string>();
+  const claims: Claim[] = extracted.map((c, i) => {
+    const id = `c${i + 1}`;
+    const claim: Claim = { ...c, id, ticker: c.ticker ?? onlyTicker, company: c.company ?? onlyCompany };
+    if (postPeriod && borrowsPeriod(c)) {
+      borrowed.add(id);
+      claim.fiscalYear = postPeriod.fiscalYear;
+      claim.fiscalQuarter = postPeriod.fiscalQuarter;
+      claim.period = postPeriod.period;
+    }
+    return claim;
+  });
 
   // Several claims about one company share a single fetch within this check.
   const inFlight = new Map<string, Promise<Evidence | null>>();
@@ -94,7 +139,13 @@ export async function checkPost(postText: string, deps: CheckDeps): Promise<Chec
       const evidence = await fetchEvidence(source, claim);
       if (!evidence) return cant(`No filing data found for ${claim.ticker}.`);
       const { verdict, reason, citation } = source.evaluate(claim, evidence);
-      return { claim, verdict, reason, evidence: citation ? { ...evidence, citation } : evidence };
+      // Say so when the period was read from elsewhere in the post, so a
+      // reader can see why this year was used and not the latest one.
+      const fullReason =
+        borrowed.has(claim.id) && postPeriod && verdict !== 'cant_check'
+          ? `${reason} The post names ${periodLabel(postPeriod)} earlier, so this figure is checked against that period.`
+          : reason;
+      return { claim, verdict, reason: fullReason, evidence: citation ? { ...evidence, citation } : evidence };
     } catch {
       // One source being down should not fail the whole check.
       return cant("Couldn't reach the data source. Try again in a minute.");

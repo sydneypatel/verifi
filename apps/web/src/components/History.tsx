@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { tickersOf, titleOf } from '../post';
 import type { HistoryEntry } from '../storage';
 import { Chevron, TopBar, VERDICTS } from './ui';
@@ -6,8 +6,13 @@ import { Chevron, TopBar, VERDICTS } from './ui';
 interface HistoryProps {
   entries: HistoryEntry[];
   onOpen: (id: string) => void;
+  onDelete: (id: string) => void;
+  /** Puts a deleted entry back where it was. */
+  onRestore: (entry: HistoryEntry, index: number) => void;
   onClear: () => void;
 }
+
+const UNDO_MS = 5000;
 
 function dayLabel(iso: string): string {
   const d = new Date(iso);
@@ -23,8 +28,31 @@ function outcome(e: HistoryEntry): string {
   return `${summary.holdsUp} of ${summary.checkable} ${summary.holdsUp === 1 ? 'holds' : 'hold'} up`;
 }
 
-export function History({ entries, onOpen, onClear }: HistoryProps) {
+function titleFor(e: HistoryEntry): string {
+  return titleOf(e.result).subtitle ?? e.result.ticker ?? e.result.entityName ?? 'Post';
+}
+
+export function History({ entries, onOpen, onDelete, onRestore, onClear }: HistoryProps) {
   const [query, setQuery] = useState('');
+  // The last deleted check, kept for a few seconds so it can be undone.
+  const [removed, setRemoved] = useState<{ entry: HistoryEntry; index: number } | null>(null);
+
+  useEffect(() => {
+    if (!removed) return;
+    const t = setTimeout(() => setRemoved(null), UNDO_MS);
+    return () => clearTimeout(t);
+  }, [removed]);
+
+  function remove(e: HistoryEntry) {
+    setRemoved({ entry: e, index: entries.findIndex((x) => x.id === e.id) });
+    onDelete(e.id);
+  }
+
+  function undo() {
+    if (!removed) return;
+    onRestore(removed.entry, removed.index);
+    setRemoved(null);
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -94,31 +122,44 @@ export function History({ entries, onOpen, onClear }: HistoryProps) {
           <section key={g.day} className="flex flex-col gap-2">
             <h2 className="text-xs font-bold tracking-wider text-muted">{g.day}</h2>
             {g.items.map((e) => (
-              <button
-                key={e.id}
-                type="button"
-                onClick={() => onOpen(e.id)}
-                className="flex w-full cursor-pointer items-center gap-2 rounded-2xl border border-line bg-white p-3.5 text-left"
-              >
-                <span className="flex min-w-0 flex-1 flex-col gap-2">
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-extrabold tracking-wide text-navy">{titleOf(e.result).subtitle ?? e.result.ticker ?? e.result.entityName ?? 'Post'}</span>
-                    <span className="text-xs text-muted">
-                      {new Date(e.savedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+              // A wrapper div, since the delete button can't sit inside the open button.
+              <div key={e.id} className="relative">
+                <button
+                  type="button"
+                  onClick={() => onOpen(e.id)}
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-2xl border border-line bg-white p-3.5 text-left"
+                >
+                  <span className="flex min-w-0 flex-1 flex-col gap-2">
+                    {/* Right padding leaves room for the delete button. */}
+                    <span className="flex items-center justify-between gap-2 pr-8">
+                      <span className="text-sm font-extrabold tracking-wide text-navy">{titleFor(e)}</span>
+                      <span className="text-xs text-muted">
+                        {new Date(e.savedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                      </span>
+                    </span>
+                    <span className="line-clamp-2 text-sm leading-snug text-strong">"{e.text}"</span>
+                    <span className="flex items-center gap-2">
+                      <span className="flex h-1.5 w-24 gap-[3px]" aria-hidden="true">
+                        {e.result.claims.map((c) => (
+                          <span key={c.claim.id} className={`flex-1 rounded ${VERDICTS[c.verdict].bar}`} />
+                        ))}
+                      </span>
+                      <span className="text-xs font-semibold text-body">{outcome(e)}</span>
                     </span>
                   </span>
-                  <span className="line-clamp-2 text-sm leading-snug text-strong">"{e.text}"</span>
-                  <span className="flex items-center gap-2">
-                    <span className="flex h-1.5 w-24 gap-[3px]" aria-hidden="true">
-                      {e.result.claims.map((c) => (
-                        <span key={c.claim.id} className={`flex-1 rounded ${VERDICTS[c.verdict].bar}`} />
-                      ))}
-                    </span>
-                    <span className="text-xs font-semibold text-body">{outcome(e)}</span>
-                  </span>
-                </span>
-                <Chevron />
-              </button>
+                  <Chevron />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => remove(e)}
+                  aria-label={`Delete check: ${titleFor(e)}`}
+                  className="absolute top-1 right-1 flex h-11 w-11 cursor-pointer items-center justify-center rounded-full text-muted hover:bg-unknown-soft hover:text-navy"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
             ))}
           </section>
         ))}
@@ -129,6 +170,16 @@ export function History({ entries, onOpen, onClear }: HistoryProps) {
           </button>
         )}
       </div>
+
+      {removed && (
+        // Sits just above the tab bar.
+        <div role="status" className="sticky bottom-[84px] z-20 mx-4 mb-3 flex items-center justify-between gap-3 rounded-xl bg-navy py-2 pr-2 pl-4 text-sm text-white shadow-lg">
+          <span>Check deleted</span>
+          <button type="button" onClick={undo} className="min-h-11 cursor-pointer rounded-lg px-3 font-bold text-teal-on-navy">
+            Undo
+          </button>
+        </div>
+      )}
     </>
   );
 }
