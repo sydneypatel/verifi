@@ -147,9 +147,18 @@ const TABS: { id: Tab; label: string; path: ReactNode }[] = [
   },
 ];
 
+// When opened from the iPhone home screen there is no Safari toolbar, so the home
+// indicator sits over the bottom of the page. The tab bar grows by that inset
+// (0 on desktop and in regular Safari) so its buttons stay tappable.
+const TAB_BAR_INSET = 'max(12px, env(safe-area-inset-bottom))';
+
 export function TabBar({ active, onSelect }: { active: Tab; onSelect: (tab: Tab) => void }) {
   return (
-    <nav aria-label="Main" className="sticky bottom-0 z-10 flex h-[72px] shrink-0 border-t border-line bg-white px-3 pb-3">
+    <nav
+      aria-label="Main"
+      className="sticky bottom-0 z-10 flex shrink-0 border-t border-line bg-white px-3"
+      style={{ height: `calc(60px + ${TAB_BAR_INSET})`, paddingBottom: TAB_BAR_INSET }}
+    >
       {TABS.map((tab) => {
         const on = tab.id === active;
         return (
