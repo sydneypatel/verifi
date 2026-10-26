@@ -5,6 +5,9 @@ import { Chevron, TopBar, VERDICTS } from './ui';
 
 interface HistoryProps {
   entries: HistoryEntry[];
+  /** Signed-in email, or null for a guest. */
+  email: string | null;
+  onOpenAccount: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
   /** Puts a deleted entry back where it was. */
@@ -32,10 +35,11 @@ function titleFor(e: HistoryEntry): string {
   return titleOf(e.result).subtitle ?? e.result.ticker ?? e.result.entityName ?? 'Post';
 }
 
-export function History({ entries, onOpen, onDelete, onRestore, onClear }: HistoryProps) {
+export function History({ entries, email, onOpenAccount, onOpen, onDelete, onRestore, onClear }: HistoryProps) {
   const [query, setQuery] = useState('');
   // The last deleted check, kept for a few seconds so it can be undone.
   const [removed, setRemoved] = useState<{ entry: HistoryEntry; index: number } | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     if (!removed) return;
@@ -72,25 +76,44 @@ export function History({ entries, onOpen, onDelete, onRestore, onClear }: Histo
     <>
       <TopBar
         left={<span className="pl-3 text-xl font-extrabold tracking-tight text-navy">History</span>}
-        right={<span className="mr-3 rounded-xl bg-unknown-soft px-2.5 py-1 text-xs font-semibold text-body">Guest</span>}
+        right={
+          email ? (
+            <span className="mr-3 flex items-center gap-1 rounded-xl bg-teal-soft px-2.5 py-1 text-xs font-semibold text-teal-deep">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Synced
+            </span>
+          ) : (
+            <span className="mr-3 rounded-xl bg-unknown-soft px-2.5 py-1 text-xs font-semibold text-body">Guest</span>
+          )
+        }
       />
 
       <div className="flex flex-1 flex-col gap-3.5 px-4 pt-4 pb-4">
-        <section className="flex flex-col gap-3 rounded-2xl bg-navy p-4 text-white">
-          <div className="flex items-start gap-2.5">
-            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" className="mt-px shrink-0" aria-hidden="true">
-              <rect x="3" y="5" width="16" height="11" rx="2" className="stroke-teal-on-navy" strokeWidth="1.8" />
-              <path d="M8 19h6" className="stroke-teal-on-navy" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-            <div className="flex flex-col gap-1">
-              <h2 className="text-base font-bold">Saved on this device only</h2>
-              <p className="text-[13px] leading-normal text-dash">
-                You never need an account to check a post. Accounts, to keep your checks on your phone and laptop, are coming soon.
-              </p>
+        {!email && (
+          <section className="flex flex-col gap-3 rounded-2xl bg-navy p-4 text-white">
+            <div className="flex items-start gap-2.5">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" className="mt-px shrink-0" aria-hidden="true">
+                <rect x="3" y="5" width="16" height="11" rx="2" className="stroke-teal-on-navy" strokeWidth="1.8" />
+                <path d="M8 19h6" className="stroke-teal-on-navy" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+              <div className="flex flex-col gap-1">
+                <h2 className="text-base font-bold">Saved on this device only</h2>
+                <p className="text-[13px] leading-normal text-dash">
+                  You never need an account to check a post. Sign in to keep your checks on your phone and laptop.
+                </p>
+              </div>
             </div>
-          </div>
-          <span className="flex h-11 items-center justify-center rounded-xl border border-body text-sm font-semibold text-dash">Accounts coming soon</span>
-        </section>
+            <button
+              type="button"
+              onClick={onOpenAccount}
+              className="flex h-11 cursor-pointer items-center justify-center rounded-xl bg-white text-sm font-bold text-navy"
+            >
+              Sign in with email
+            </button>
+          </section>
+        )}
 
         {entries.length > 0 && (
           <div className="flex h-11 items-center gap-2 rounded-xl border border-dash bg-white px-3">
@@ -164,11 +187,33 @@ export function History({ entries, onOpen, onDelete, onRestore, onClear }: Histo
           </section>
         ))}
 
-        {entries.length > 0 && (
-          <button type="button" onClick={onClear} className="mt-2 min-h-11 cursor-pointer self-center text-sm font-semibold text-body underline">
-            Clear history on this device
-          </button>
-        )}
+        {entries.length > 0 &&
+          (confirmClear ? (
+            <div className="mt-2 flex flex-col items-center gap-2 rounded-2xl border border-line bg-white p-3.5">
+              <p className="text-center text-sm text-body">
+                {email ? 'Delete all your checks from your account and every device?' : 'Delete all checks on this device?'}
+              </p>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setConfirmClear(false)} className="min-h-11 cursor-pointer rounded-lg px-4 text-sm font-semibold text-body">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClear();
+                    setConfirmClear(false);
+                  }}
+                  className="min-h-11 cursor-pointer rounded-lg bg-contra px-4 text-sm font-bold text-white"
+                >
+                  Delete all
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setConfirmClear(true)} className="mt-2 min-h-11 cursor-pointer self-center text-sm font-semibold text-body underline">
+              {email ? 'Clear history' : 'Clear history on this device'}
+            </button>
+          ))}
       </div>
 
       {removed && (

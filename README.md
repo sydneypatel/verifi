@@ -41,7 +41,8 @@ npm run build             # production build of the web app
 Optional. Without it, checks work and nothing is saved. With it, every check is logged, and a
 post checked again within six hours reuses its saved result (no LLM or SEC calls).
 
-1. In the Supabase dashboard: SQL Editor > New query, paste `supabase/migrations/001_init.sql`, Run.
+1. In the Supabase dashboard: SQL Editor > New query, paste each file in `supabase/migrations/` in
+   order (`001_init.sql`, then `002_accounts.sql`), Run.
 2. Add to `.env` and to Vercel's Environment Variables:
    - `SUPABASE_URL` = `https://<project>.supabase.co`
    - `SUPABASE_SECRET_KEY` = the secret key (`sb_secret_...`). Server only; never put it in `apps/web`.
@@ -50,9 +51,22 @@ post checked again within six hours reuses its saved result (no LLM or SEC calls
 |---|---|
 | `posts` | One row per distinct post: cleaned text, tickers, latest result |
 | `checks` | One row per check: which post, paste or screenshot, a random device id, cached or not |
-| `history` | Posts a signed-in user checked (for sign-in) |
-| `follows` | Tickers a signed-in user follows (for sign-in) |
-| `post_stats` | View: most-checked posts with check and device counts (production only) |
+| `history` | Posts a signed-in user checked, one row per post |
+| `follows` | Tickers a signed-in user follows |
+| `post_stats` | View: most-checked posts, grouping near-identical copies, with check and device counts (production only) |
+
+`posts.hash` is the exact post (reuses results). `posts.group_hash` ignores punctuation, emoji and
+"Show more" labels, and is only used for counting.
+
+## Accounts
+
+Sign-in is an emailed code (Supabase Auth, email OTP). Checking never needs an account. Signed-in
+users' history and followed tickers sync through `history` and `follows`; the web app talks to
+Supabase directly with the publishable key, and the database rules limit each user to their own
+rows. Signing out clears this device's copy.
+
+Supabase setup: Authentication > Emails > Templates, put `{{ .Token }}` in the "Magic Link" and
+"Confirm signup" templates so the email contains the code.
 
 Screenshots are never stored, only the text read from them. Usernames are never shown publicly.
 Checks are tagged `production`, `preview` or `development`, so local testing can be filtered out.

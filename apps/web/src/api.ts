@@ -6,6 +6,12 @@ const BASE = import.meta.env.VITE_API_URL ?? '';
 
 export type Mode = 'live' | 'demo';
 
+export interface CheckResponse {
+  result: CheckResult;
+  /** The server's id for this post, used to save it to an account. Null when nothing was saved. */
+  postHash: string | null;
+}
+
 /** Whether the server checks real SEC filings or the made-up demo company. */
 export async function getMode(): Promise<Mode | null> {
   try {
@@ -17,7 +23,7 @@ export async function getMode(): Promise<Mode | null> {
   }
 }
 
-export async function checkPost(text: string): Promise<CheckResult> {
+export async function checkPost(text: string): Promise<CheckResponse> {
   let res: Response;
   try {
     res = await fetch(`${BASE}/api/check`, {
@@ -31,9 +37,10 @@ export async function checkPost(text: string): Promise<CheckResult> {
     throw new Error("Can't reach HypeCheck. Check your connection and try again.");
   }
 
-  const data = (await res.json().catch(() => null)) as (CheckResult & { error?: string }) | null;
+  const data = (await res.json().catch(() => null)) as (CheckResult & { error?: string; postHash?: string | null }) | null;
   if (!res.ok || !data) {
     throw new Error(data?.error ?? "The check couldn't be completed. Try again in a minute.");
   }
-  return data;
+  const { postHash, error: _error, ...result } = data;
+  return { result, postHash: typeof postHash === 'string' ? postHash : null };
 }

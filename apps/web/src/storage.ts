@@ -1,18 +1,23 @@
 import type { CheckResult } from '@hypecheck/check-core';
 
-// Guest storage: everything lives in this browser only. When accounts arrive,
-// these entries are what gets uploaded to the user's account on first sign-in.
+// This device's copy of history and followed tickers. Guests use only this.
+// Signed-in users use it too, and account.ts keeps it in sync with their account.
 
 export interface HistoryEntry {
   id: string;
   text: string;
   result: CheckResult;
   savedAt: string;
+  /** The server's id for this post. Missing for checks made before the database existed. */
+  hash?: string;
+  /** True once this entry is saved to the signed-in account. */
+  synced?: boolean;
 }
 
 const HISTORY_KEY = 'hypecheck.history.v1';
 const TICKERS_KEY = 'hypecheck.tickers.v1';
 const DEVICE_KEY = 'hypecheck.device.v1';
+const SYNCED_USER_KEY = 'hypecheck.synced-user.v1';
 const MAX_ENTRIES = 50;
 
 function read<T>(key: string, fallback: T): T {
@@ -55,8 +60,14 @@ export function saveHistory(list: HistoryEntry[]): void {
   write(HISTORY_KEY, list.slice(0, MAX_ENTRIES));
 }
 
-export function newEntry(text: string, result: CheckResult): HistoryEntry {
-  return { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text, result, savedAt: new Date().toISOString() };
+export function newEntry(text: string, result: CheckResult, hash: string | null): HistoryEntry {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    text,
+    result,
+    savedAt: new Date().toISOString(),
+    ...(hash ? { hash } : {}),
+  };
 }
 
 export function loadFollowed(): string[] {
@@ -66,4 +77,20 @@ export function loadFollowed(): string[] {
 
 export function saveFollowed(list: string[]): void {
   write(TICKERS_KEY, list);
+}
+
+/** The account this device last synced with. A different one means a first sign-in here. */
+export function loadSyncedUser(): string | null {
+  return read<string | null>(SYNCED_USER_KEY, null);
+}
+
+export function saveSyncedUser(userId: string | null): void {
+  if (userId) write(SYNCED_USER_KEY, userId);
+  else {
+    try {
+      localStorage.removeItem(SYNCED_USER_KEY);
+    } catch {
+      // Nothing to do.
+    }
+  }
 }

@@ -32,8 +32,14 @@ export interface CheckMeta {
   device?: string | null;
 }
 
+export interface CheckOutcome {
+  result: CheckResult;
+  /** The saved post's id, which the app uses to add it to an account. Null when nothing was saved. */
+  postHash: string | null;
+}
+
 export interface Checker {
-  check(text: string, meta?: CheckMeta): Promise<CheckResult>;
+  check(text: string, meta?: CheckMeta): Promise<CheckOutcome>;
   describe(): string;
 }
 
@@ -65,8 +71,8 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
   // Demo checks are never saved, so the made-up company stays out of the data.
   const store: CheckStore | null = fixtures ? null : createSupabaseStore(env);
 
-  async function check(text: string, meta: CheckMeta = {}): Promise<CheckResult> {
-    if (!store) return checkPost(text, deps);
+  async function check(text: string, meta: CheckMeta = {}): Promise<CheckOutcome> {
+    if (!store) return { result: await checkPost(text, deps), postHash: null };
 
     const hash = hashPost(text);
     const log = (cached: boolean) =>
@@ -88,18 +94,19 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
       Date.now() - Date.parse(saved.checkedAt) < REUSE_FOR_MS;
     if (saved && fresh) {
       await log(true);
-      return saved.result;
+      return { result: saved.result, postHash: hash };
     }
 
     // 2. Otherwise check it, save the result, and log the check.
     const result = await checkPost(text, deps);
     try {
       await store.savePost({ hash, text: cleanPostText(text), result, extractor: extractor.name, version: RESULT_VERSION });
-      await log(false);
     } catch (error) {
       console.error(error);
+      return { result, postHash: null };
     }
-    return result;
+    await log(false);
+    return { result, postHash: hash };
   }
 
   return {

@@ -7,7 +7,7 @@ import { cleanDeviceId } from './store';
 // file and everything it imports into api/check.js, the single file Vercel runs.
 //
 //   GET  /api/check                    -> { ok, mode }  (the web app reads this)
-//   POST /api/check  { "text": "..." } -> CheckResult
+//   POST /api/check  { "text": "..." } -> CheckResult plus postHash (the saved post's id, or null)
 //
 // Settings come from Vercel's environment variables:
 //   HYPECHECK_DEMO=1     serve the made-up demo company, no SEC or LLM calls
@@ -73,7 +73,8 @@ export default async function handler(req: VercelRequest, res: ServerResponse): 
     const text = await readText(req);
     if (text === null) throw new InputError('Send JSON like {"text": "..."}');
     const device = cleanDeviceId(req.headers['x-hypecheck-device']);
-    send(res, 200, await checker.check(text, { source: 'paste', device }));
+    const { result, postHash } = await checker.check(text, { source: 'paste', device });
+    send(res, 200, { ...result, postHash });
   } catch (error) {
     if (error instanceof InputError) return send(res, 400, { error: error.message });
     console.error(error);

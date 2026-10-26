@@ -27,7 +27,9 @@ interface HomeProps {
   text: string;
   onTextChange: (text: string) => void;
   onSubmit: () => void;
-  onOpenHistory: () => void;
+  /** Signed-in email, or null for a guest. */
+  email: string | null;
+  onOpenAccount: () => void;
   loading: boolean;
   error: string | null;
   mode: Mode | null;
@@ -39,7 +41,7 @@ const PILLARS = [
   { label: 'No buy or sell calls', icon: <path d="M4 16V11M10 16V5M16 16V8" /> },
 ];
 
-export function Home({ text, onTextChange, onSubmit, onOpenHistory, loading, error, mode }: HomeProps) {
+export function Home({ text, onTextChange, onSubmit, email, onOpenAccount, loading, error, mode }: HomeProps) {
   return (
     <>
       <TopBar
@@ -50,13 +52,26 @@ export function Home({ text, onTextChange, onSubmit, onOpenHistory, loading, err
           </span>
         }
         right={
-          <button
-            type="button"
-            onClick={onOpenHistory}
-            className="mr-2 h-9 cursor-pointer rounded-full bg-navy px-3.5 text-sm font-semibold text-white"
-          >
-            Sign in
-          </button>
+          email ? (
+            <button
+              type="button"
+              onClick={onOpenAccount}
+              aria-label={`Account: ${email}`}
+              className="mr-2 flex h-11 w-11 cursor-pointer items-center justify-center"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-navy text-[15px] font-bold text-white">
+                {email[0]?.toUpperCase()}
+              </span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onOpenAccount}
+              className="mr-2 h-9 cursor-pointer rounded-full bg-navy px-3.5 text-sm font-semibold text-white"
+            >
+              Sign in
+            </button>
+          )
         }
       />
 

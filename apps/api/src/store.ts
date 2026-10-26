@@ -24,10 +24,30 @@ export interface CheckStore {
   logCheck(entry: { postHash: string; source: CheckSource; device: string | null; cached: boolean }): Promise<void>;
 }
 
-/** Same post, same hash: cleaned the way the pipeline cleans it, then case and spacing ignored. */
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+
+/**
+ * Exact identity of a post: cleaned the way the pipeline cleans it, then case and spacing ignored.
+ * Decides when a saved result is reused, so any change to words or numbers makes a new post.
+ */
 export function hashPost(text: string): string {
-  const normalized = cleanPostText(text).toLowerCase().replace(/\s+/g, ' ').trim();
-  return createHash('sha256').update(normalized).digest('hex');
+  return sha256(cleanPostText(text).toLowerCase().replace(/\s+/g, ' ').trim());
+}
+
+// Text social apps add around a post that isn't part of it.
+const UI_NOISE = /\b(show more|show less|translate post|see translation|read more)\b/g;
+
+/**
+ * Looser identity, for counting how often "the same post" is checked: also ignores punctuation,
+ * emoji and "Show more"-style labels. Never used to reuse a result.
+ */
+export function groupKeyOf(text: string): string {
+  const loose = cleanPostText(text)
+    .toLowerCase()
+    .replace(UI_NOISE, ' ')
+    .replace(/[^\p{L}\p{N}$%]+/gu, ' ')
+    .trim();
+  return sha256(loose);
 }
 
 /** Accept only the random id the web app makes; anything else is dropped. */
@@ -68,6 +88,7 @@ export function createSupabaseStore(env: Record<string, string | undefined>): Ch
         headers: { prefer: 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify({
           hash,
+          group_hash: groupKeyOf(text),
           text,
           tickers: result.tickers,
           result,

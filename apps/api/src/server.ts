@@ -5,7 +5,7 @@ import { loadEnv } from './env';
 import { cleanDeviceId } from './store';
 
 // The one endpoint every client calls:
-//   POST /api/check   { "text": "<post>" }   ->   CheckResult
+//   POST /api/check   { "text": "<post>" }   ->   CheckResult plus postHash (the saved post's id, or null)
 // Plain node:http keeps this portable. To deploy as a serverless function,
 // call checker.check() from the platform's handler instead of this server.
 
@@ -64,7 +64,8 @@ const server = createServer(async (req, res) => {
     if (typeof text !== 'string') throw new InputError('Send JSON like {"text": "..."}');
 
     const device = cleanDeviceId(req.headers['x-hypecheck-device']);
-    send(res, 200, await checker.check(text, { source: 'paste', device }));
+    const { result, postHash } = await checker.check(text, { source: 'paste', device });
+    send(res, 200, { ...result, postHash });
   } catch (error) {
     if (error instanceof InputError) return send(res, 400, { error: error.message });
     console.error(error);
