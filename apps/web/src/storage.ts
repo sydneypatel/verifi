@@ -12,6 +12,7 @@ export interface HistoryEntry {
 
 const HISTORY_KEY = 'hypecheck.history.v1';
 const TICKERS_KEY = 'hypecheck.tickers.v1';
+const DEVICE_KEY = 'hypecheck.device.v1';
 const MAX_ENTRIES = 50;
 
 function read<T>(key: string, fallback: T): T {
@@ -29,6 +30,20 @@ function write(key: string, value: unknown): void {
   } catch {
     // Private browsing or full storage: the app still works, history just isn't kept.
   }
+}
+
+function randomId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+/** A random id for this browser. It identifies a device for counting, never a person. */
+export function getDeviceId(): string {
+  const existing = read<string | null>(DEVICE_KEY, null);
+  if (typeof existing === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(existing)) return existing;
+  const id = randomId();
+  write(DEVICE_KEY, id);
+  return id;
 }
 
 export function loadHistory(): HistoryEntry[] {

@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { InputError } from '@hypecheck/check-core';
 import { createChecker, type Checker } from './checker';
+import { cleanDeviceId } from './store';
 
 // The Vercel serverless version of the API. `npm run build:api` bundles this
 // file and everything it imports into api/check.js, the single file Vercel runs.
@@ -13,6 +14,8 @@ import { createChecker, type Checker } from './checker';
 //   SEC_USER_AGENT       required for live mode: "HypeCheck your-email@example.com"
 //   ANTHROPIC_API_KEY    optional: with it, an LLM reads the post
 //   HYPECHECK_MODEL      optional
+//   SUPABASE_URL         optional: with SUPABASE_SECRET_KEY, checks are saved and reused
+//   SUPABASE_SECRET_KEY  optional, server only
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -69,7 +72,8 @@ export default async function handler(req: VercelRequest, res: ServerResponse): 
   try {
     const text = await readText(req);
     if (text === null) throw new InputError('Send JSON like {"text": "..."}');
-    send(res, 200, await checker.check(text));
+    const device = cleanDeviceId(req.headers['x-hypecheck-device']);
+    send(res, 200, await checker.check(text, { source: 'paste', device }));
   } catch (error) {
     if (error instanceof InputError) return send(res, 400, { error: error.message });
     console.error(error);

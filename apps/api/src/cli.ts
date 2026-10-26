@@ -23,7 +23,7 @@ const LABELS = { holds_up: 'HOLDS UP', misleading: 'MISLEADING', contradicted: '
 
 try {
   const checker = createChecker({ fixtures, env: process.env });
-  const result = await checker.check(text);
+  const result = await checker.check(text, { source: 'cli' });
 
   if (asJson) {
     console.log(JSON.stringify(result, null, 2));

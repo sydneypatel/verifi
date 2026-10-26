@@ -1,4 +1,5 @@
 import type { CheckResult } from '@hypecheck/check-core';
+import { getDeviceId } from './storage';
 
 // Empty in dev (Vite proxies /api). Set VITE_API_URL when the API is hosted elsewhere.
 const BASE = import.meta.env.VITE_API_URL ?? '';
@@ -21,7 +22,9 @@ export async function checkPost(text: string): Promise<CheckResult> {
   try {
     res = await fetch(`${BASE}/api/check`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      // The device id is a random value from this browser, so the server can tell
+      // "5 checks from 5 phones" apart from "5 checks from one phone".
+      headers: { 'content-type': 'application/json', 'x-hypecheck-device': getDeviceId() },
       body: JSON.stringify({ text }),
     });
   } catch {

@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { InputError } from '@hypecheck/check-core';
 import { createChecker } from './checker';
 import { loadEnv } from './env';
+import { cleanDeviceId } from './store';
 
 // The one endpoint every client calls:
 //   POST /api/check   { "text": "<post>" }   ->   CheckResult
@@ -19,7 +20,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
     'content-type': 'application/json',
     'access-control-allow-origin': '*',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type, x-hypecheck-device',
     'access-control-allow-methods': 'POST, GET, OPTIONS',
   });
   res.end(JSON.stringify(body));
@@ -62,7 +63,8 @@ const server = createServer(async (req, res) => {
     const text = (payload as { text?: unknown } | null)?.text;
     if (typeof text !== 'string') throw new InputError('Send JSON like {"text": "..."}');
 
-    send(res, 200, await checker.check(text));
+    const device = cleanDeviceId(req.headers['x-hypecheck-device']);
+    send(res, 200, await checker.check(text, { source: 'paste', device }));
   } catch (error) {
     if (error instanceof InputError) return send(res, 400, { error: error.message });
     console.error(error);
