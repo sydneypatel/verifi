@@ -2,6 +2,7 @@ import { formatDate, formatUsd } from '../../format';
 import type { Citation, Claim, Evidence, EvidenceFigure, FigureEvidence, ReportedPeriod } from '../../types';
 import type { Evaluation, EvidenceSource } from '../types';
 import { SecClient, filingUrl } from './client';
+import { newestFiling, withRelease, type EarningsReleases } from './releases';
 import { REVENUE_CONCEPTS } from './revenueFacts';
 import { buildSeries, toTime, type SeriesPeriod } from './series';
 
@@ -37,10 +38,14 @@ function calendarOf(p: ReportedPeriod): { year: number; quarter: number } {
   return { year: middle.getUTCFullYear(), quarter: Math.floor(middle.getUTCMonth() / 3) + 1 };
 }
 
+export function filingLabel(form: string, filed: string): string {
+  return form === '8-K' ? `Form 8-K earnings release, filed ${formatDate(filed)}` : `Form ${form}, filed ${formatDate(filed)}`;
+}
+
 function citationFor(evidence: FigureEvidence, p: ReportedPeriod): Citation {
   return {
-    label: `Form ${p.filing.form}, filed ${formatDate(p.filing.filed)}`,
-    url: filingUrl(evidence.cik, p.filing.accession),
+    label: filingLabel(p.filing.form, p.filing.filed),
+    url: p.filing.url ?? filingUrl(evidence.cik, p.filing.accession),
   };
 }
 
@@ -53,14 +58,14 @@ function toReported(p: SeriesPeriod): ReportedPeriod {
     fiscalYear: p.fiscalYear,
     fiscalQuarter: p.fiscalQuarter,
     derived: p.derived,
-    filing: { accession: p.accession, form: p.form, filed: p.filed },
+    filing: { accession: p.accession, form: p.form, filed: p.filed, ...(p.url ? { url: p.url } : {}) },
   };
 }
 
 function figuresFor(quarters: ReportedPeriod[], years: ReportedPeriod[]): EvidenceFigure[] {
   return [
     ...quarters.slice(0, 4).map((q) => ({
-      label: `Quarter ended ${formatDate(q.end)}${q.derived ? ' (calculated)' : ''}`,
+      label: `Quarter ended ${formatDate(q.end)}${q.derived ? ' (calculated)' : q.filing.form === '8-K' ? ' (earnings release)' : ''}`,
       value: formatUsd(q.value),
     })),
     ...years.slice(0, 2).map((y) => ({ label: `Fiscal year ended ${formatDate(y.end)}`, value: formatUsd(y.value) })),
@@ -179,7 +184,13 @@ export function evaluateFigureClaim(claim: Claim, evidence: FigureEvidence): Eva
   return { verdict: 'contradicted', reason: `${actual} The post says ${claimedText}.`, citation };
 }
 
-export function createSecFigureSource({ sec }: { sec: SecClient }): EvidenceSource {
+export interface FigureSourceOptions {
+  sec: SecClient;
+  /** Optional: fresher quarters from earnings press releases, before the 10-Q is filed. */
+  releases?: EarningsReleases;
+}
+
+export function createSecFigureSource({ sec, releases }: FigureSourceOptions): EvidenceSource {
   const metricOf = (claim: Claim) => (claim.metric === 'revenue' || claim.metric === 'net_income' ? claim.metric : null);
 
   return {
@@ -197,8 +208,9 @@ export function createSecFigureSource({ sec }: { sec: SecClient }): EvidenceSour
       if (!company) return null;
       const facts = await sec.getCompanyFacts(company.cik);
       if (!facts) return null;
-      const series = buildSeries(facts, CONCEPTS[metric]);
+      let series = buildSeries(facts, CONCEPTS[metric]);
       if (!series) return null;
+      if (releases) series = withRelease(series, await releases.latest(company.cik, newestFiling(series)), metric);
 
       const quarters = series.quarters.slice(0, 12).map(toReported);
       const years = series.years.slice(0, 6).map(toReported);

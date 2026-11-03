@@ -35,6 +35,31 @@ export function formatSignedPercent(percent: number): string {
   return `${percent >= 0 ? '+' : '-'}${formatPercentMagnitude(percent)}`;
 }
 
+/** 1.254 -> "$1.25", -0.12 -> "-$0.12" (per-share amounts). */
+export function formatPerShare(value: number): string {
+  return `${value < 0 ? '-' : ''}$${Math.abs(value).toFixed(2)}`;
+}
+
+/** 182.456 -> "$182.46" (a share price). */
+export function formatPrice(value: number): string {
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** An ISO timestamp -> "Nov 3, 2026, 12:47 PM ET". Market hours are New York hours. */
+export function formatTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const text = date.toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  return `${text} ET`;
+}
+
 /** 30.98 -> "up 31.0%", -4.2 -> "down 4.2%" */
 export function describeChange(percent: number): string {
   return `${percent >= 0 ? 'up' : 'down'} ${formatPercentMagnitude(percent)}`;

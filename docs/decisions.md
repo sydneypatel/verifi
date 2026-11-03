@@ -63,19 +63,73 @@ Which period a claim means:
 - **"This quarter" or a quarter with no year**: the latest reported quarter.
 - **No period at all**: the latest quarter or the latest fiscal year, whichever matches.
 
+## Earnings press releases (8-K)
+
+Companies announce a quarter in a press release (Form 8-K, Item 2.02, Exhibit 99.1) weeks
+before the 10-Q carries the structured numbers. When the latest release was filed after the
+latest 10-Q or 10-K, revenue, net income and growth checks use the release's quarter.
+
+The release is HTML, so an LLM reads three figures from it (revenue, net income, diluted EPS),
+each with the exact text it copied them from. Code then keeps a figure only if:
+
+- that text is in the release, and
+- the figure is printed in that text, at one of the table scales (ones, thousands, millions, billions), and
+- the quarter-end date the model names is printed in the release.
+
+Anything else is dropped and the check falls back to the filings. The LLM still never
+supplies a number that the user sees unless the document prints it. Code is in
+`sources/sec/releases.ts`. Needs `ANTHROPIC_API_KEY`; without it, filings alone are used.
+
+Each release is read once per server instance (cached six hours), and only when it is newer
+than the filed data.
+
+## Market data and earnings estimates (Finnhub)
+
+Optional, with `FINNHUB_API_KEY` (free tier: 60 calls a minute, personal and non-commercial
+use only; the next tier is $3,500/month, so this is not the path for a commercial launch).
+
+| Claim type | Example | Data |
+|---|---|---|
+| `earnings_result` | "beat earnings", "missed estimates", "EPS of $1.25", "beat by 20%" | `/stock/earnings`: last four quarters, EPS actual vs estimate |
+| `price_move` | "up 40% this week", "shares fell 12% today" | `/quote` (today) and `/stock/metric` (5 days, month to date, year to date, 52 weeks) |
+| `market_cap` | "a $3T company" | `/stock/profile2` |
+
+Verdict rules (constants at the top of each file in `sources/finnhub/`):
+
+| Claim | Holds up | Misleading | Contradicted |
+|---|---|---|---|
+| Beat / miss | Same outcome as reported | Reported in line (within half a cent) but the post says beat or miss; or the stated size of the beat is off by more than 2 points or 20% | Opposite outcome |
+| EPS figure | Within 1 cent or 3% | Matches an older quarter, or within 15% | Anything else |
+| Price move, window named | Within 3 points or 20% | Matches a different window, or right direction within 8 points or 40% | Anything else |
+| Price move, no window | Matches any window (the reason says which) | Right direction within the loose band | Nothing matches |
+| Market value | Within 10% | Within 25% | Anything else |
+
+Prices move all day and a post is usually older than the check, so price bands are wide,
+every reason says when the price was read, market evidence is cached for five minutes, and a
+saved result with a price check is reused for five minutes instead of six hours.
+
+Finnhub's EPS is the adjusted figure analysts track, which can differ from GAAP EPS in the
+filing. The reason says so.
+
 ## Known limits
 
 - **Segment figures.** "Revenue up 300%" that is true of one business segment shows as
   Contradicted, not Misleading. The SEC's structured API leaves out segment breakdowns;
   catching this means reading the filing itself.
 - **Fresh earnings.** Structured data arrives with the 10-Q or 10-K, which can trail the
-  earnings press release. Until then the "latest quarter" is the previous one.
+  earnings press release. The release fills the gap when `ANTHROPIC_API_KEY` is set and its
+  figures verify; otherwise the "latest quarter" is the previous one.
 - **Fourth quarters.** Companies report the full year, not Q4 alone. Q4 is calculated as the
   full year minus the first three quarters, and labelled as calculated.
 - **Companies without SEC revenue data.** Foreign filers that do not report in US GAAP,
   OTC shells and crypto come back as "no filing data".
-- **Other dollar figures.** Only revenue and net income are checked. Cash, debt, earnings per
-  share, spending and valuation come back as "can't be checked".
+- **Other dollar figures.** Only revenue and net income are checked as dollar figures. Cash,
+  debt and spending come back as "can't be checked". Earnings per share and market value are
+  checked through Finnhub when it is connected.
+- **Old posts and prices.** A price claim is compared with the price at the time of the check.
+  A post that was right last week can show as Contradicted today; the reason says when the
+  price was read.
+- **Short interest.** Still not checked: Finnhub's short-interest data is not on the free tier.
 - **Non-GAAP numbers.** Posts often quote "adjusted" profit. Filings are compared on the
   standard (GAAP) figure, so an adjusted number can show as Contradicted.
 - **Private companies.** No ticker means no filings. Claims about private companies or leaked documents always come back as "can't be checked".

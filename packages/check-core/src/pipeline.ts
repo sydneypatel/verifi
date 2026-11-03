@@ -8,6 +8,9 @@ import type { CheckResult, CheckedClaim, Claim, ClaimType, Evidence, ExtractedCl
 const NOT_BUILT_YET: Partial<Record<ClaimType, string>> = {
   financial_figure: 'HypeCheck can only check revenue and net income figures so far.',
   short_interest: "HypeCheck can't check short interest yet.",
+  earnings_result: "Earnings estimates aren't connected, so this can't be checked right now.",
+  price_move: "Market data isn't connected, so this can't be checked right now.",
+  market_cap: "Market data isn't connected, so this can't be checked right now.",
 };
 
 export const MAX_POST_LENGTH = 6000;
@@ -137,7 +140,7 @@ export async function checkPost(postText: string, deps: CheckDeps): Promise<Chec
 
     try {
       const evidence = await fetchEvidence(source, claim);
-      if (!evidence) return cant(`No filing data found for ${claim.ticker}.`);
+      if (!evidence) return cant(source.emptyReason?.(claim) ?? `No filing data found for ${claim.ticker}.`);
       const { verdict, reason, citation } = source.evaluate(claim, evidence);
       // Say so when the period was read from elsewhere in the post, so a
       // reader can see why this year was used and not the latest one.
@@ -158,7 +161,12 @@ export async function checkPost(postText: string, deps: CheckDeps): Promise<Chec
   return {
     ticker: postTicker,
     tickers,
-    entityName: tickers.length > 1 ? null : checked.find((c) => c.evidence)?.evidence?.entityName ?? postCompany,
+    // Some sources only know the ticker, so prefer evidence that carries a real company name.
+    entityName:
+      tickers.length > 1
+        ? null
+        : (checked.find((c) => c.evidence && c.evidence.entityName !== c.evidence.ticker) ?? checked.find((c) => c.evidence))?.evidence?.entityName ??
+          postCompany,
     claims: checked,
     summary: {
       total: checked.length,

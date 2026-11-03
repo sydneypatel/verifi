@@ -18,6 +18,8 @@ export interface EvidenceSource {
   supports(claim: Claim): boolean;
   /** Claims that share a key share one fetch. */
   cacheKey(claim: Claim): string;
+  /** What to tell the user when fetchEvidence returns null. Defaults to "No filing data found". */
+  emptyReason?(claim: Claim): string;
   /** Returns null when the source has nothing for this ticker. Throws on network errors. */
   fetchEvidence(claim: Claim): Promise<Evidence | null>;
   /** Pure comparison of claim and evidence. No network, no LLM. */

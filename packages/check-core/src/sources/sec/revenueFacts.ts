@@ -1,5 +1,6 @@
 import type { GrowthBasis, PeriodValue } from '../../types';
 import type { SecCompanyFacts } from './client';
+import { withRelease, type EarningsRelease } from './releases';
 import { DAY, buildSeries, endingNear, toTime, type SeriesPeriod } from './series';
 
 // Companies tag revenue under different names. The one with the newest data wins.
@@ -14,7 +15,7 @@ export interface RevenueSummary {
   concept: string;
   bases: GrowthBasis[];
   /** The filing that reported the most recent period. */
-  latest: { accession: string; form: string; filed: string; periodEnd: string };
+  latest: { accession: string; form: string; filed: string; periodEnd: string; url?: string };
 }
 
 function basis(id: GrowthBasis['id'], label: string, current: SeriesPeriod, prior: SeriesPeriod): GrowthBasis | null {
@@ -28,9 +29,11 @@ function basis(id: GrowthBasis['id'], label: string, current: SeriesPeriod, prio
  * latest quarter vs a year earlier, latest quarter vs the previous quarter,
  * and latest fiscal year vs the one before.
  */
-export function summarizeRevenue(facts: SecCompanyFacts): RevenueSummary | null {
-  const series = buildSeries(facts, REVENUE_CONCEPTS);
-  if (!series) return null;
+export function summarizeRevenue(facts: SecCompanyFacts, release?: EarningsRelease | null): RevenueSummary | null {
+  const filed = buildSeries(facts, REVENUE_CONCEPTS);
+  if (!filed) return null;
+  // A newer quarter from an earnings press release, if there is one.
+  const series = withRelease(filed, release, 'revenue');
 
   const { quarters, years } = series;
   const bases: GrowthBasis[] = [];
@@ -65,6 +68,6 @@ export function summarizeRevenue(facts: SecCompanyFacts): RevenueSummary | null 
   return {
     concept: series.concept,
     bases,
-    latest: { accession: newest.accession, form: newest.form, filed: newest.filed, periodEnd: newest.end },
+    latest: { accession: newest.accession, form: newest.form, filed: newest.filed, periodEnd: newest.end, ...(newest.url ? { url: newest.url } : {}) },
   };
 }

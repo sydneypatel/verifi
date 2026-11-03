@@ -26,6 +26,8 @@ export interface SeriesPeriod {
   accession: string;
   form: string;
   filed: string;
+  /** A direct link to the document, when it is not the filing's folder (an earnings release exhibit). */
+  url?: string;
 }
 
 export interface Series {

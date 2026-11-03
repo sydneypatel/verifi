@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { checkPost } from '../src/pipeline';
 import type { Claim, ExtractedClaim } from '../src/types';
 
-const base: ExtractedClaim = { quote: '', type: 'financial_figure', ticker: null, company: null, claimedPercent: null, direction: null, period: null, metric: 'revenue', claimedAmount: null, fiscalYear: null, fiscalQuarter: null, bound: null };
+const base: ExtractedClaim = { quote: '', type: 'financial_figure', ticker: null, company: null, claimedPercent: null, direction: null, period: null, metric: 'revenue', claimedAmount: null, fiscalYear: null, fiscalQuarter: null, bound: null, vsEstimate: null, window: null };
 const c = (o: Partial<ExtractedClaim>): ExtractedClaim => ({ ...base, ...o });
 
 // Fake SEC source: FY2025 MSFT = 281.7B, latest (FY2026) = 331.8B.

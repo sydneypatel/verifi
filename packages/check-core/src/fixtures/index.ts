@@ -93,3 +93,36 @@ export function createFixtureFetch(): FetchLike {
       : { ok: false, status: 404, json: async () => ({}) };
   };
 }
+
+// Market data for the demo company, in the shape Finnhub returns. Made up.
+export const demoFinnhub: Record<string, unknown> = {
+  '/quote?symbol=TGSR': { c: 18.42, d: 0.61, dp: 3.42, h: 18.9, l: 17.6, o: 17.8, pc: 17.81, t: 1793721600 },
+  '/stock/profile2?symbol=TGSR': { name: 'Tallgrass Solar Inc', ticker: 'TGSR', marketCapitalization: 1290.5, currency: 'USD' },
+  '/stock/metric?symbol=TGSR&metric=all': {
+    metric: {
+      '5DayPriceReturnDaily': 11.8,
+      monthToDatePriceReturnDaily: 6.2,
+      yearToDatePriceReturnDaily: -14.5,
+      '52WeekPriceReturnDaily': -22.1,
+      marketCapitalization: 1290.5,
+    },
+  },
+  '/stock/earnings?symbol=TGSR': [
+    { actual: -0.09, estimate: -0.11, period: '2026-06-30', quarter: 2, year: 2026, surprise: 0.02, surprisePercent: 18.18, symbol: 'TGSR' },
+    { actual: -0.1, estimate: -0.1, period: '2026-03-31', quarter: 1, year: 2026, surprise: 0, surprisePercent: 0, symbol: 'TGSR' },
+    { actual: -0.14, estimate: -0.12, period: '2025-12-31', quarter: 4, year: 2025, surprise: -0.02, surprisePercent: -16.67, symbol: 'TGSR' },
+    { actual: -0.11, estimate: -0.13, period: '2025-09-30', quarter: 3, year: 2025, surprise: 0.02, surprisePercent: 15.38, symbol: 'TGSR' },
+  ],
+};
+
+/** A stand-in for fetch that serves Finnhub data for the demo company. Unknown symbols get zeros, as Finnhub does. */
+export function createFinnhubFixtureFetch(): FetchLike {
+  return async (url) => {
+    const path = url.replace('https://finnhub.io/api/v1', '');
+    const body = demoFinnhub[path];
+    if (body) return { ok: true, status: 200, json: async () => body };
+    if (path.startsWith('/quote')) return { ok: true, status: 200, json: async () => ({ c: 0, d: null, dp: null, pc: 0, t: 0 }) };
+    if (path.startsWith('/stock/earnings')) return { ok: true, status: 200, json: async () => [] };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+}

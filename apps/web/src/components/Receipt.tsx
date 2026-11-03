@@ -1,4 +1,4 @@
-import type { CheckResult } from '@hypecheck/check-core';
+import type { CheckResult, Evidence } from '@hypecheck/check-core';
 import { BackButton, Disclaimer, TopBar, VERDICTS, VerdictBadge } from './ui';
 
 interface ReceiptProps {
@@ -6,6 +6,38 @@ interface ReceiptProps {
   index: number;
   onBack: () => void;
   onNext: () => void;
+}
+
+/** How each kind of evidence is labelled on the receipt. */
+function describeSource(evidence: Evidence): { badge: string; heading: string; link: string; limits: string } {
+  const filingLimits = 'Whether the stock is fairly priced, or where it goes next.';
+  switch (evidence.kind) {
+    case 'market':
+      return {
+        badge: 'MKT',
+        heading: 'MARKET DATA',
+        link: 'View quote',
+        limits: 'Prices move all day. This compares the post with the price when you checked, not when the post was written.',
+      };
+    case 'earnings_result':
+      return {
+        badge: 'EPS',
+        heading: 'EARNINGS PER SHARE VS ESTIMATES',
+        link: 'View history',
+        limits: 'Adjusted EPS, as analysts track it. The GAAP figure in the filing can differ.',
+      };
+    default: {
+      const form = evidence.citation.label.match(/Form ([^,\s]+)/)?.[1] ?? 'SEC';
+      const metric = evidence.kind === 'financial_figure' && evidence.metric === 'net_income' ? 'NET INCOME' : 'REVENUE';
+      const release = form === '8-K';
+      return {
+        badge: form,
+        heading: release ? `${metric}, FROM THE EARNINGS RELEASE` : `${metric}, AS FILED`,
+        link: 'View on SEC',
+        limits: release ? `${filingLimits} The 10-Q with full detail comes later.` : filingLimits,
+      };
+    }
+  }
 }
 
 const PANEL: Record<string, string> = {
@@ -20,7 +52,7 @@ export function Receipt({ result, index, onBack, onNext }: ReceiptProps) {
   if (!checked) return null;
   const { claim, verdict, reason, evidence } = checked;
   const isLast = index === result.claims.length - 1;
-  const metric = evidence?.kind === 'financial_figure' && evidence.metric === 'net_income' ? 'Net income' : 'Revenue';
+  const source = evidence ? describeSource(evidence) : null;
 
   return (
     <>
@@ -45,7 +77,7 @@ export function Receipt({ result, index, onBack, onNext }: ReceiptProps) {
           <section className="flex flex-col gap-3 rounded-2xl border border-line bg-white p-3.5">
             <div className="flex items-center gap-2.5">
               <span className="flex h-10 w-9 shrink-0 items-center justify-center rounded-md bg-navy text-[10px] font-extrabold text-white">
-                {evidence.citation.label.match(/Form ([^,\s]+)/)?.[1] ?? 'SEC'}
+                {source!.badge}
               </span>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="text-[15px] font-bold text-ink">{evidence.entityName}</span>
@@ -57,10 +89,10 @@ export function Receipt({ result, index, onBack, onNext }: ReceiptProps) {
                 rel="noreferrer"
                 className="flex min-h-9 shrink-0 items-center rounded-lg border border-dash px-2.5 text-xs font-semibold text-navy no-underline"
               >
-                View on SEC
+                {source!.link}
               </a>
             </div>
-            <h3 className="text-xs font-bold tracking-wider text-muted">{metric.toUpperCase()}, AS FILED</h3>
+            <h3 className="text-xs font-bold tracking-wider text-muted">{source!.heading}</h3>
             <dl className="flex flex-col gap-2 rounded-xl bg-ground p-3 text-sm">
               {evidence.figures.map((row) => {
                 const isChange = row.label.startsWith('Change');
@@ -77,7 +109,7 @@ export function Receipt({ result, index, onBack, onNext }: ReceiptProps) {
 
         <section className="flex flex-col gap-1 rounded-xl border border-dashed border-dash px-3.5 py-3">
           <h2 className="text-[13px] font-bold text-navy">What this check does not cover</h2>
-          <p className="text-[13px] leading-normal text-body">Whether the stock is fairly priced, or where it goes next.</p>
+          <p className="text-[13px] leading-normal text-body">{source?.limits ?? 'Whether the stock is fairly priced, or where it goes next.'}</p>
         </section>
 
         <div className="mt-auto flex flex-col gap-2 pt-2">

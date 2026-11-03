@@ -6,6 +6,8 @@ export type FetchLike = (url: string, init?: { headers?: Record<string, string> 
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
+  /** Needed only for documents that are not JSON (earnings press releases). */
+  text?(): Promise<string>;
 }>;
 
 export interface SecFact {
@@ -29,6 +31,29 @@ export interface SecCompanyFacts {
   cik: number;
   entityName: string;
   facts: Record<string, Record<string, SecConcept>>;
+}
+
+/** The SEC's list of a company's recent filings, as parallel arrays (one index per filing). */
+export interface SecSubmissions {
+  cik?: string;
+  name?: string;
+  filings: {
+    recent: {
+      accessionNumber: string[];
+      filingDate: string[];
+      reportDate?: string[];
+      form: string[];
+      items?: string[];
+      primaryDocument?: string[];
+    };
+  };
+}
+
+/** One file inside a filing's folder. */
+export interface FilingFile {
+  name: string;
+  type?: string;
+  size?: string | number;
 }
 
 interface TickerRow {
@@ -58,6 +83,31 @@ export class SecClient {
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`SEC request failed (${res.status}) for ${url}`);
     return res.json();
+  }
+
+  private async getRaw(url: string): Promise<string | null> {
+    const res = await this.fetchImpl(url, { headers: { 'User-Agent': this.options.userAgent, Accept: 'text/html,text/plain' } });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`SEC request failed (${res.status}) for ${url}`);
+    if (!res.text) throw new Error('This fetch cannot read documents.');
+    return res.text();
+  }
+
+  /** The company's recent filings (forms, dates, 8-K item numbers). */
+  async getSubmissions(cik: number): Promise<SecSubmissions | null> {
+    const padded = String(cik).padStart(10, '0');
+    return (await this.getJson(`https://data.sec.gov/submissions/CIK${padded}.json`)) as SecSubmissions | null;
+  }
+
+  /** The files inside one filing (the main form and its exhibits). */
+  async getFilingFiles(cik: number, accession: string): Promise<FilingFile[]> {
+    const data = (await this.getJson(`${filingUrl(cik, accession)}index.json`)) as { directory?: { item?: FilingFile[] } } | null;
+    return data?.directory?.item ?? [];
+  }
+
+  /** A document from a filing, as raw HTML or text. */
+  async getDocument(url: string): Promise<string | null> {
+    return this.getRaw(url);
   }
 
   /** Ticker -> SEC company id (CIK). The full ticker list is fetched once per process. */

@@ -94,7 +94,7 @@ export function summarizePost(result: CheckResult): string[] {
   const parts = [
     holds && `${holds} ${holds === 1 ? 'holds' : 'hold'} up`,
     misleading && `${misleading} ${misleading === 1 ? 'is' : 'are'} misleading`,
-    contradicted && `${contradicted} ${contradicted === 1 ? 'is' : 'are'} contradicted by the filings`,
+    contradicted && `${contradicted} ${contradicted === 1 ? 'is' : 'are'} contradicted by the data`,
     cant && `${cant} can't be checked`,
   ].filter(Boolean) as string[];
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
@@ -104,7 +104,7 @@ export function summarizePost(result: CheckResult): string[] {
   if (worst) {
     lines.push(`The biggest gap is "${worst.claim.quote}". ${worst.reason}`);
   } else if (holds > 0 && misleading + contradicted === 0) {
-    lines.push('Every claim we could check matches what the company filed.');
+    lines.push('Every claim we could check matches the filings and market data.');
   }
 
   if (cant > 0) {

@@ -6,6 +6,9 @@ export type ClaimType =
   | 'financial_figure'
   | 'short_interest'
   | 'corporate_event'
+  | 'earnings_result'
+  | 'price_move'
+  | 'market_cap'
   | 'prediction'
   | 'opinion'
   | 'other';
@@ -20,6 +23,12 @@ export type Quarter = 1 | 2 | 3 | 4;
 
 /** Which reported number a dollar-figure claim is about. */
 export type Metric = 'revenue' | 'net_income' | 'other';
+
+/** "Beat estimates", "missed", "in line with expectations". */
+export type EstimateResult = 'beat' | 'miss' | 'in_line';
+
+/** The time span a stock-price claim is about: "today", "this week", "this year". */
+export type PriceWindow = 'day' | 'week' | 'month' | 'ytd' | 'year';
 
 /** One checkable (or uncheckable) statement pulled out of a post. */
 export interface Claim {
@@ -37,7 +46,10 @@ export interface Claim {
   period: Period | null;
   /** Dollar-figure claims: which number. Null for other claim types. */
   metric: Metric | null;
-  /** Dollar-figure claims: the amount in US dollars. Negative for a loss. */
+  /**
+   * Dollar-figure claims: the amount in US dollars, negative for a loss.
+   * Earnings claims: earnings per share in dollars. Market-cap claims: the market value in dollars.
+   */
   claimedAmount: number | null;
   /** The year the post names for the period ("2025 revenue", "Q2 2026"), if any. */
   fiscalYear: number | null;
@@ -45,6 +57,10 @@ export interface Claim {
   fiscalQuarter: Quarter | null;
   /** Set when the post states a floor or ceiling rather than a figure. */
   bound: Bound | null;
+  /** Earnings claims: whether the post says the company beat or missed analyst estimates. */
+  vsEstimate: EstimateResult | null;
+  /** Price-move claims: the time span the move is said to cover. */
+  window: PriceWindow | null;
 }
 
 /** What the LLM (or the rule-based fallback) returns: a claim without an id. */
@@ -86,7 +102,8 @@ export interface ReportedPeriod extends PeriodValue {
   fiscalQuarter: Quarter | null;
   /** True for a fourth quarter worked out as full year minus the first three quarters. */
   derived: boolean;
-  filing: { accession: string; form: string; filed: string };
+  /** url: a direct link to the document when it is not the filing's folder (an earnings release). */
+  filing: { accession: string; form: string; filed: string; url?: string };
 }
 
 interface EvidenceBase {
@@ -113,9 +130,38 @@ export interface FigureEvidence extends EvidenceBase {
   years: ReportedPeriod[];
 }
 
+/** One reported quarter of earnings per share, with the analyst estimate before it. */
+export interface EarningsQuarter {
+  /** End date of the quarter. */
+  period: string;
+  fiscalYear: number | null;
+  fiscalQuarter: Quarter | null;
+  actual: number | null;
+  estimate: number | null;
+  /** (actual - estimate) / |estimate| x 100. */
+  surprisePercent: number | null;
+}
+
+export interface EarningsEvidence extends EvidenceBase {
+  kind: 'earnings_result';
+  /** Newest first. */
+  quarters: EarningsQuarter[];
+}
+
+export interface MarketEvidence extends EvidenceBase {
+  kind: 'market';
+  /** When the price was read (ISO timestamp). Prices move, so every verdict says this. */
+  readAt: string;
+  price: number | null;
+  /** Price change in percent over each window that the data covers. */
+  returns: Partial<Record<PriceWindow, number>>;
+  /** Market value in US dollars. */
+  marketCap: number | null;
+}
+
 // Add new evidence kinds to this union as adapters are added
-// (short interest, 8-K events, insider trades, ...).
-export type Evidence = RevenueEvidence | FigureEvidence;
+// (short interest, insider trades, ...).
+export type Evidence = RevenueEvidence | FigureEvidence | EarningsEvidence | MarketEvidence;
 
 export interface CheckedClaim {
   claim: Claim;

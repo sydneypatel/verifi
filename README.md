@@ -27,8 +27,18 @@ npm run dev
 npm run check -- "\$AAPL revenue is up 300% this quarter"
 ```
 
-Add `ANTHROPIC_API_KEY` to `.env` to have an LLM read the post. Without it, a small
-rule-based extractor is used, which only understands phrasings like "revenue is up 40%".
+Add `ANTHROPIC_API_KEY` to `.env` to have an LLM read the post (and earnings press releases).
+Without it, a small rule-based extractor is used, which only understands phrasings like
+"revenue is up 40%", "up 12% today", "beat earnings" or "a $3T company".
+
+Add `FINNHUB_API_KEY` (free at https://finnhub.io/dashboard) to check earnings vs estimates,
+price moves and market value. Without it, those claims show as "can't be checked".
+
+| Data | What it checks | Key |
+|---|---|---|
+| SEC XBRL (10-Q, 10-K) | Revenue, net income, revenue growth | `SEC_USER_AGENT` |
+| SEC 8-K earnings releases | The same, for a quarter announced before its 10-Q | `ANTHROPIC_API_KEY` |
+| Finnhub | EPS vs estimates, price moves, market value | `FINNHUB_API_KEY` |
 
 ```bash
 npm test                  # pipeline tests

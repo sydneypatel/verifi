@@ -2,7 +2,10 @@ import { describeChange, formatDate, formatPercentMagnitude, formatSignedPercent
 import type { Claim, Evidence, EvidenceFigure, GrowthBasis, RevenueEvidence } from '../../types';
 import type { Evaluation, EvidenceSource } from '../types';
 import { SecClient, filingUrl } from './client';
-import { summarizeRevenue } from './revenueFacts';
+import { filingLabel } from './figureSource';
+import { newestFiling, type EarningsReleases } from './releases';
+import { REVENUE_CONCEPTS, summarizeRevenue } from './revenueFacts';
+import { buildSeries } from './series';
 
 // How close a claimed percentage must be to the filed one. Tune these against
 // real posts: tight = "holds up", loose = "close but overstated or understated".
@@ -104,10 +107,12 @@ export function evaluateRevenueClaim(claim: Claim, evidence: RevenueEvidence): E
 
 export interface RevenueSourceOptions {
   sec: SecClient;
+  /** Optional: fresher quarters from earnings press releases, before the 10-Q is filed. */
+  releases?: EarningsReleases;
 }
 
 /** Checks "revenue is up X%" claims against the company's own SEC filings. */
-export function createSecRevenueSource({ sec }: RevenueSourceOptions): EvidenceSource {
+export function createSecRevenueSource({ sec, releases }: RevenueSourceOptions): EvidenceSource {
   return {
     id: 'sec-revenue',
     // A new 10-Q can land any day; six hours keeps results fresh without refetching per check.
@@ -123,7 +128,12 @@ export function createSecRevenueSource({ sec }: RevenueSourceOptions): EvidenceS
       if (!company) return null;
       const facts = await sec.getCompanyFacts(company.cik);
       if (!facts) return null;
-      const summary = summarizeRevenue(facts);
+      let release = null;
+      if (releases) {
+        const filed = buildSeries(facts, REVENUE_CONCEPTS);
+        if (filed) release = await releases.latest(company.cik, newestFiling(filed));
+      }
+      const summary = summarizeRevenue(facts, release);
       if (!summary) return null;
 
       return {
@@ -135,8 +145,8 @@ export function createSecRevenueSource({ sec }: RevenueSourceOptions): EvidenceS
         bases: summary.bases,
         figures: figuresFor(summary.bases),
         citation: {
-          label: `Form ${summary.latest.form}, filed ${formatDate(summary.latest.filed)}`,
-          url: filingUrl(company.cik, summary.latest.accession),
+          label: filingLabel(summary.latest.form, summary.latest.filed),
+          url: summary.latest.url ?? filingUrl(company.cik, summary.latest.accession),
         },
       };
     },

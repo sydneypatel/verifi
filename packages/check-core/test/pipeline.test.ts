@@ -13,12 +13,18 @@ import {
   type ClaimExtractor,
   type FetchLike,
 } from '../src';
-import { DEMO_POST, createFixtureFetch } from '../src/fixtures';
+import { DEMO_POST, createFinnhubFixtureFetch, createFixtureFetch } from '../src/fixtures';
+import { FinnhubClient, createFinnhubEarningsSource, createFinnhubMarketSource } from '../src';
 import { cleanPostText } from '../src/text';
 
 function deps(fetchImpl: FetchLike = createFixtureFetch()) {
   const sec = new SecClient({ userAgent: 'test test@example.com', fetch: fetchImpl });
-  return { extractor: createRuleBasedExtractor(), sources: [createSecRevenueSource({ sec }), createSecFigureSource({ sec })], cache: new MemoryCache() };
+  const finnhub = new FinnhubClient({ apiKey: 'test', fetch: createFinnhubFixtureFetch() });
+  return {
+    extractor: createRuleBasedExtractor(),
+    sources: [createSecRevenueSource({ sec }), createSecFigureSource({ sec }), createFinnhubEarningsSource({ finnhub }), createFinnhubMarketSource({ finnhub })],
+    cache: new MemoryCache(),
+  };
 }
 
 describe('checkPost', () => {
@@ -28,13 +34,18 @@ describe('checkPost', () => {
     expect(result.ticker).toBe('TGSR');
     expect(result.entityName).toBe('Tallgrass Solar, Inc.');
     expect(result.claims.map((c) => [c.claim.type, c.verdict])).toEqual([
+      ['earnings_result', 'holds_up'],
       ['revenue_growth', 'contradicted'],
       ['short_interest', 'cant_check'],
       ['prediction', 'cant_check'],
     ]);
-    expect(result.summary).toEqual({ total: 3, checkable: 1, holdsUp: 0 });
+    expect(result.summary).toEqual({ total: 4, checkable: 2, holdsUp: 1 });
 
-    const revenue = result.claims[0]!;
+    const earnings = result.claims[0]!;
+    expect(earnings.claim.vsEstimate).toBe('beat');
+    expect(earnings.reason).toContain('EPS was -$0.09 against an analyst estimate of -$0.11');
+
+    const revenue = result.claims[1]!;
     expect(revenue.claim.claimedPercent).toBe(300);
     expect(revenue.evidence?.citation.url).toBe('https://www.sec.gov/Archives/edgar/data/1999999/000199999926000031/');
     expect(revenue.evidence?.citation.label).toBe('Form 10-Q, filed Aug 6, 2026');
@@ -48,8 +59,11 @@ describe('checkPost', () => {
   it('keeps going when the data source is down', async () => {
     const failing: FetchLike = async () => ({ ok: false, status: 503, json: async () => ({}) });
     const result = await checkPost(DEMO_POST, deps(failing));
-    expect(result.claims[0]!.verdict).toBe('cant_check');
-    expect(result.claims[0]!.reason).toContain("Couldn't reach");
+    const revenue = result.claims.find((c) => c.claim.type === 'revenue_growth')!;
+    expect(revenue.verdict).toBe('cant_check');
+    expect(revenue.reason).toContain("Couldn't reach");
+    // The other source still answers.
+    expect(result.claims.find((c) => c.claim.type === 'earnings_result')!.verdict).toBe('holds_up');
   });
 
   it('fetches evidence once and reuses it from the cache', async () => {
