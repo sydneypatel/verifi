@@ -1,4 +1,4 @@
-import type { CheckResult, Evidence } from '@hypecheck/check-core';
+import type { CheckResult, Evidence } from '@verifi/check-core';
 import { BackButton, Disclaimer, TopBar, VERDICTS, VerdictBadge } from './ui';
 
 interface ReceiptProps {

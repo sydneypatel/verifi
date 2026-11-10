@@ -1,4 +1,4 @@
-import type { Verdict } from '@hypecheck/check-core';
+import type { Verdict } from '@verifi/check-core';
 import type { ReactNode } from 'react';
 
 export const VERDICTS: Record<
@@ -111,7 +111,7 @@ export function Chevron() {
 export function Disclaimer({ children }: { children?: ReactNode }) {
   return (
     <p className="text-xs leading-relaxed text-muted">
-      {children ?? 'HypeCheck checks claims. It does not tell you to buy or sell. Not financial advice.'}
+      {children ?? 'Verifi checks claims. It does not tell you to buy or sell. Not financial advice.'}
     </p>
   );
 }

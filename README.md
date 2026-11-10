@@ -1,4 +1,4 @@
-# HypeCheck
+# Verifi
 
 Paste a stock post, get each claim checked against public filings.
 
@@ -98,10 +98,10 @@ commit the result after changing anything in `apps/api` or `packages/check-core`
 2. In Vercel: Add New > Project > import the repo. Leave Root Directory as the repo root;
    `vercel.json` sets the build.
 3. Settings > Environment Variables:
-   - `SEC_USER_AGENT` = `HypeCheck your-email@example.com` (required for live data)
+   - `SEC_USER_AGENT` = `Verifi your-email@example.com` (required for live data)
    - `ANTHROPIC_API_KEY` (optional; without it the rule-based extractor is used)
    - `SUPABASE_URL` and `SUPABASE_SECRET_KEY` (optional; see Database)
-   - or `HYPECHECK_DEMO` = `1` to serve only the made-up demo company
+   - or `VERIFI_DEMO` = `1` to serve only the made-up demo company
 4. Redeploy after changing variables.
 
 The public link calls the LLM on every new post, so set a spending limit on the API key.

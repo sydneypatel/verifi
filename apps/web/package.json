@@ -1,5 +1,5 @@
 {
-  "name": "@hypecheck/web",
+  "name": "@verifi/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@hypecheck/check-core": "*",
+    "@verifi/check-core": "*",
     "@supabase/supabase-js": "^2.118.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

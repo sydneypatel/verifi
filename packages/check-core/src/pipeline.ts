@@ -6,8 +6,8 @@ import type { CheckResult, CheckedClaim, Claim, ClaimType, Evidence, ExtractedCl
 
 // Shown when a claim is factual but no data source covers its type yet.
 const NOT_BUILT_YET: Partial<Record<ClaimType, string>> = {
-  financial_figure: 'HypeCheck can only check revenue and net income figures so far.',
-  short_interest: "HypeCheck can't check short interest yet.",
+  financial_figure: 'Verifi can only check revenue and net income figures so far.',
+  short_interest: "Verifi can't check short interest yet.",
   earnings_result: "Earnings estimates aren't connected, so this can't be checked right now.",
   price_move: "Market data isn't connected, so this can't be checked right now.",
   market_cap: "Market data isn't connected, so this can't be checked right now.",
@@ -136,7 +136,7 @@ export async function checkPost(postText: string, deps: CheckDeps): Promise<Chec
     }
 
     const source = deps.sources.find((s) => s.supports(claim));
-    if (!source) return cant(NOT_BUILT_YET[claim.type] ?? "HypeCheck can't check this kind of claim yet.");
+    if (!source) return cant(NOT_BUILT_YET[claim.type] ?? "Verifi can't check this kind of claim yet.");
 
     try {
       const evidence = await fetchEvidence(source, claim);

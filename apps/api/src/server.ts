@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { InputError } from '@hypecheck/check-core';
+import { InputError } from '@verifi/check-core';
 import { NotConfiguredError, createChecker } from './checker';
 import { loadEnv } from './env';
 import { cleanDeviceId, cleanSource } from './store';
@@ -23,7 +23,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
     'content-type': 'application/json',
     'access-control-allow-origin': '*',
-    'access-control-allow-headers': 'content-type, x-hypecheck-device',
+    'access-control-allow-headers': 'content-type, x-verifi-device, x-hypecheck-device',
     'access-control-allow-methods': 'POST, GET, OPTIONS',
   });
   res.end(JSON.stringify(body));
@@ -79,7 +79,7 @@ const server = createServer(async (req, res) => {
     const text = body.text;
     if (typeof text !== 'string') throw new InputError('Send JSON like {"text": "..."}');
 
-    const device = cleanDeviceId(req.headers['x-hypecheck-device']);
+    const device = cleanDeviceId(req.headers['x-verifi-device'] ?? req.headers['x-hypecheck-device']);
     const { result, postHash } = await checker.check(text, { source: cleanSource(body.source), device });
     send(res, 200, { ...result, postHash });
   } catch (error) {
@@ -91,5 +91,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`HypeCheck API on http://localhost:${port}  (${checker.describe()})`);
+  console.log(`Verifi API on http://localhost:${port}  (${checker.describe()})`);
 });

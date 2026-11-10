@@ -1,4 +1,4 @@
-import type { CheckResult } from '@hypecheck/check-core';
+import type { CheckResult } from '@verifi/check-core';
 import { allHype, segmentPost, summarizePost, tickersOf, titleOf } from '../post';
 import { BackButton, Chevron, ClaimNumber, Disclaimer, TopBar, VERDICTS, VerdictBadge } from './ui';
 
@@ -118,7 +118,7 @@ export function Results({ text, result, onBack, onOpenClaim }: ResultsProps) {
         </section>
 
         <div className="flex flex-col gap-1 pt-1">
-          <Disclaimer>Saved to History on this device. HypeCheck checks claims; it does not tell you to buy or sell. Not financial advice.</Disclaimer>
+          <Disclaimer>Saved to History on this device. Verifi checks claims; it does not tell you to buy or sell. Not financial advice.</Disclaimer>
           <p className="text-[11px] text-muted">Read by {result.extractor}</p>
         </div>
       </div>

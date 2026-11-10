@@ -1,4 +1,4 @@
-import { DEMO_POST } from '@hypecheck/check-core/fixtures';
+import { DEMO_POST } from '@verifi/check-core/fixtures';
 import { createChecker } from './checker';
 import { loadEnv } from './env';
 

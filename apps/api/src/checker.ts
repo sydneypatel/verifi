@@ -21,15 +21,15 @@ import {
   type CheckDeps,
   type CheckResult,
   type EvidenceSource,
-} from '@hypecheck/check-core';
-import { createFinnhubFixtureFetch, createFixtureFetch } from '@hypecheck/check-core/fixtures';
+} from '@verifi/check-core';
+import { createFinnhubFixtureFetch, createFixtureFetch } from '@verifi/check-core/fixtures';
 import { createSupabaseStore, hashPost, type CheckSource, type CheckStore } from './store';
 
 // Bump this whenever verdict logic or a data source changes, so saved results
 // from the old logic are recomputed instead of reused.
 // 2: 8-K earnings releases, Finnhub earnings and market data, three new claim types.
 // 3: fiscal labels for EPS quarters; month-to-date left out early in a month.
-export const RESULT_VERSION = 3;
+export const RESULT_VERSION = 4;
 
 // A saved result is reused for the same post for this long (matches the SEC evidence cache).
 const REUSE_FOR_MS = 6 * 60 * 60 * 1000;
@@ -75,23 +75,23 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
   const userAgent = env.SEC_USER_AGENT;
   if (!fixtures && !userAgent) {
     throw new Error(
-      'SEC_USER_AGENT is not set. Locally, add it to .env (see .env.example). On Vercel, add it under Settings > Environment Variables and redeploy. Or use demo mode (npm run dev:demo, or HYPECHECK_DEMO=1 on Vercel).',
+      'SEC_USER_AGENT is not set. Locally, add it to .env (see .env.example). On Vercel, add it under Settings > Environment Variables and redeploy. Or use demo mode (npm run dev:demo, or VERIFI_DEMO=1 on Vercel).',
     );
   }
 
   const sec = new SecClient({
-    userAgent: userAgent ?? 'HypeCheck demo',
+    userAgent: userAgent ?? 'Verifi demo',
     fetch: fixtures ? createFixtureFetch() : undefined,
   });
 
   const extractor = env.ANTHROPIC_API_KEY
-    ? createAnthropicExtractor({ apiKey: env.ANTHROPIC_API_KEY, model: env.HYPECHECK_MODEL })
+    ? createAnthropicExtractor({ apiKey: env.ANTHROPIC_API_KEY, model: env.VERIFI_MODEL ?? env.HYPECHECK_MODEL })
     : createRuleBasedExtractor();
 
   // Earnings press releases need an LLM to read them. Without a key, filings alone are used.
   const releases =
     !fixtures && env.ANTHROPIC_API_KEY
-      ? createEarningsReleases({ sec, reader: createAnthropicReleaseReader({ apiKey: env.ANTHROPIC_API_KEY, model: env.HYPECHECK_MODEL }) })
+      ? createEarningsReleases({ sec, reader: createAnthropicReleaseReader({ apiKey: env.ANTHROPIC_API_KEY, model: env.VERIFI_MODEL ?? env.HYPECHECK_MODEL }) })
       : undefined;
 
   // Finnhub (free tier): EPS vs estimates, prices, market value. Optional.
@@ -109,7 +109,7 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
 
   // Screenshots are read by the same model, with vision. Off without a key and in demo mode.
   const screenshots =
-    !fixtures && env.ANTHROPIC_API_KEY ? createAnthropicScreenshotReader({ apiKey: env.ANTHROPIC_API_KEY, model: env.HYPECHECK_MODEL }) : null;
+    !fixtures && env.ANTHROPIC_API_KEY ? createAnthropicScreenshotReader({ apiKey: env.ANTHROPIC_API_KEY, model: env.VERIFI_MODEL ?? env.HYPECHECK_MODEL }) : null;
 
   const tickerCards = createTickerSnapshots({ sec, finnhub });
 

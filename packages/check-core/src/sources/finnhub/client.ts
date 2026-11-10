@@ -24,7 +24,7 @@ export interface FinnhubProfile {
   currency?: string;
 }
 
-/** Only the fields HypeCheck reads. Finnhub returns many more. */
+/** Only the fields Verifi reads. Finnhub returns many more. */
 export interface FinnhubMetrics {
   metric?: Record<string, number | string | null | undefined>;
 }

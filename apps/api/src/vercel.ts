@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { InputError } from '@hypecheck/check-core';
+import { InputError } from '@verifi/check-core';
 import { NotConfiguredError, createChecker, type Checker } from './checker';
 import { cleanDeviceId, cleanSource } from './store';
 
@@ -14,10 +14,10 @@ import { cleanDeviceId, cleanSource } from './store';
 //                                               Nothing is checked or saved; the app shows the text first.
 //
 // Settings come from Vercel's environment variables:
-//   HYPECHECK_DEMO=1     serve the made-up demo company, no SEC or LLM calls
-//   SEC_USER_AGENT       required for live mode: "HypeCheck your-email@example.com"
+//   VERIFI_DEMO=1     serve the made-up demo company, no SEC or LLM calls
+//   SEC_USER_AGENT       required for live mode: "Verifi your-email@example.com"
 //   ANTHROPIC_API_KEY    optional: with it, an LLM reads the post, earnings releases and screenshots
-//   HYPECHECK_MODEL      optional
+//   VERIFI_MODEL      optional
 //   FINNHUB_API_KEY      optional: earnings vs estimates, prices, market value
 //   SUPABASE_URL         optional: with SUPABASE_SECRET_KEY, checks are saved and reused
 //   SUPABASE_SECRET_KEY  optional, server only
@@ -60,7 +60,7 @@ async function readPayload(req: VercelRequest): Promise<Record<string, unknown> 
 }
 
 export default async function handler(req: VercelRequest, res: ServerResponse): Promise<void> {
-  const demo = process.env.HYPECHECK_DEMO === '1';
+  const demo = (process.env.VERIFI_DEMO ?? process.env.HYPECHECK_DEMO) === '1';
 
   try {
     checker ??= createChecker({ fixtures: demo, env: process.env });
@@ -90,7 +90,7 @@ export default async function handler(req: VercelRequest, res: ServerResponse): 
     }
     const text = payload?.text;
     if (typeof text !== 'string') throw new InputError('Send JSON like {"text": "..."}');
-    const device = cleanDeviceId(req.headers['x-hypecheck-device']);
+    const device = cleanDeviceId(req.headers['x-verifi-device'] ?? req.headers['x-hypecheck-device']);
     const { result, postHash } = await checker.check(text, { source: cleanSource(payload?.source), device });
     send(res, 200, { ...result, postHash });
   } catch (error) {

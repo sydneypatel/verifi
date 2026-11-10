@@ -91,7 +91,7 @@ export function Home({ text, onTextChange, onScreenshot, reading, fromScreenshot
         left={
           <span className="flex items-center gap-2 pl-3">
             <Logo />
-            <span className="text-[19px] font-extrabold tracking-tight text-navy">HypeCheck</span>
+            <span className="text-[19px] font-extrabold tracking-tight text-navy">Verifi</span>
           </span>
         }
         right={

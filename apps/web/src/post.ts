@@ -1,4 +1,4 @@
-import type { CheckResult, CheckedClaim } from '@hypecheck/check-core';
+import type { CheckResult, CheckedClaim } from '@verifi/check-core';
 
 export type Segment = { text: string; claimIndex: number | null };
 

@@ -1,4 +1,4 @@
-import { formatDate, formatPerShare, formatPrice, formatSignedPercent, formatTime, formatUsd, type TickerSnapshot } from '@hypecheck/check-core';
+import { formatDate, formatPerShare, formatPrice, formatSignedPercent, formatTime, formatUsd, type TickerSnapshot } from '@verifi/check-core';
 
 interface TickerCardProps {
   snapshot: TickerSnapshot | undefined;

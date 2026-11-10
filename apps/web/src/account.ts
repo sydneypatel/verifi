@@ -1,4 +1,4 @@
-import type { CheckResult } from '@hypecheck/check-core';
+import type { CheckResult } from '@verifi/check-core';
 import type { HistoryEntry } from './storage';
 import { supabase } from './supabase';
 

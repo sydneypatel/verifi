@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { cleanPostText, type CheckResult } from '@hypecheck/check-core';
+import { cleanPostText, type CheckResult } from '@verifi/check-core';
 
 // Saves checks to Supabase and reuses recent results for the same post.
 // Talks to Supabase's REST API with fetch, so the bundled serverless file has no extra dependencies.

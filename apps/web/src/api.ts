@@ -1,4 +1,4 @@
-import type { CheckResult, TickerSnapshot } from '@hypecheck/check-core';
+import type { CheckResult, TickerSnapshot } from '@verifi/check-core';
 import { getDeviceId } from './storage';
 
 // Empty in dev (Vite proxies /api). Set VITE_API_URL when the API is hosted elsewhere.
@@ -36,7 +36,7 @@ export async function readScreenshot(image: string): Promise<string> {
       body: JSON.stringify({ image }),
     });
   } catch {
-    throw new Error("Can't reach HypeCheck. Check your connection and try again.");
+    throw new Error("Can't reach Verifi. Check your connection and try again.");
   }
   const data = (await res.json().catch(() => null)) as { text?: unknown; error?: string } | null;
   if (!res.ok || typeof data?.text !== 'string') {
@@ -52,11 +52,11 @@ export async function checkPost(text: string, source: PostSource = 'paste'): Pro
       method: 'POST',
       // The device id is a random value from this browser, so the server can tell
       // "5 checks from 5 phones" apart from "5 checks from one phone".
-      headers: { 'content-type': 'application/json', 'x-hypecheck-device': getDeviceId() },
+      headers: { 'content-type': 'application/json', 'x-verifi-device': getDeviceId() },
       body: JSON.stringify({ text, source }),
     });
   } catch {
-    throw new Error("Can't reach HypeCheck. Check your connection and try again.");
+    throw new Error("Can't reach Verifi. Check your connection and try again.");
   }
 
   const data = (await res.json().catch(() => null)) as (CheckResult & { error?: string; postHash?: string | null }) | null;

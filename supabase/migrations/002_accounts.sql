@@ -1,4 +1,4 @@
--- HypeCheck database, version 2: sign-in sync and looser grouping of the same post.
+-- Verifi database, version 2: sign-in sync and looser grouping of the same post.
 
 -- 1. Signed-in users add their own checks to their history (the app does this after each check).
 --    One row per user per post; checking the same post again keeps the existing row.

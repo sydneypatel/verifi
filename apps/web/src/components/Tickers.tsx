@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { TickerSnapshot } from '@hypecheck/check-core';
+import type { TickerSnapshot } from '@verifi/check-core';
 import { fetchSnapshots } from '../api';
 import { tickersOf } from '../post';
 import { loadSeen, saveSeen, type HistoryEntry } from '../storage';

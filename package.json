@@ -1,5 +1,5 @@
 {
-  "name": "hypecheck",
+  "name": "verifi",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -7,14 +7,14 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @hypecheck/api\" \"npm run dev -w @hypecheck/web\"",
-    "dev:demo": "concurrently -n api,web -c blue,green \"npm run dev:demo -w @hypecheck/api\" \"npm run dev -w @hypecheck/web\"",
-    "check": "npm run check -w @hypecheck/api --",
-    "check:demo": "npm run check:demo -w @hypecheck/api --",
-    "test": "npm run test -w @hypecheck/check-core",
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @verifi/api\" \"npm run dev -w @verifi/web\"",
+    "dev:demo": "concurrently -n api,web -c blue,green \"npm run dev:demo -w @verifi/api\" \"npm run dev -w @verifi/web\"",
+    "check": "npm run check -w @verifi/api --",
+    "check:demo": "npm run check:demo -w @verifi/api --",
+    "test": "npm run test -w @verifi/check-core",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "build": "npm run build:api && npm run build -w @hypecheck/web",
-    "build:api": "npm run build:api -w @hypecheck/api"
+    "build": "npm run build:api && npm run build -w @verifi/web",
+    "build:api": "npm run build:api -w @verifi/api"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",

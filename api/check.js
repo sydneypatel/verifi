@@ -34,8 +34,8 @@ function cleanPostText(raw) {
 
 // ../../packages/check-core/src/pipeline.ts
 var NOT_BUILT_YET = {
-  financial_figure: "HypeCheck can only check revenue and net income figures so far.",
-  short_interest: "HypeCheck can't check short interest yet.",
+  financial_figure: "Verifi can only check revenue and net income figures so far.",
+  short_interest: "Verifi can't check short interest yet.",
   earnings_result: "Earnings estimates aren't connected, so this can't be checked right now.",
   price_move: "Market data isn't connected, so this can't be checked right now.",
   market_cap: "Market data isn't connected, so this can't be checked right now."
@@ -110,7 +110,7 @@ async function checkPost(postText, deps) {
       );
     }
     const source = deps.sources.find((s) => s.supports(claim));
-    if (!source) return cant(NOT_BUILT_YET[claim.type] ?? "HypeCheck can't check this kind of claim yet.");
+    if (!source) return cant(NOT_BUILT_YET[claim.type] ?? "Verifi can't check this kind of claim yet.");
     try {
       const evidence = await fetchEvidence(source, claim);
       if (!evidence) return cant(source.emptyReason?.(claim) ?? `No filing data found for ${claim.ticker}.`);
@@ -2048,7 +2048,7 @@ function createSupabaseStore(env) {
 }
 
 // src/checker.ts
-var RESULT_VERSION = 3;
+var RESULT_VERSION = 4;
 var REUSE_FOR_MS = 6 * 60 * 60 * 1e3;
 var REUSE_MARKET_FOR_MS = 5 * 60 * 1e3;
 function reuseWindow(result) {
@@ -2060,20 +2060,20 @@ function createChecker({ fixtures, env }) {
   const userAgent = env.SEC_USER_AGENT;
   if (!fixtures && !userAgent) {
     throw new Error(
-      "SEC_USER_AGENT is not set. Locally, add it to .env (see .env.example). On Vercel, add it under Settings > Environment Variables and redeploy. Or use demo mode (npm run dev:demo, or HYPECHECK_DEMO=1 on Vercel)."
+      "SEC_USER_AGENT is not set. Locally, add it to .env (see .env.example). On Vercel, add it under Settings > Environment Variables and redeploy. Or use demo mode (npm run dev:demo, or VERIFI_DEMO=1 on Vercel)."
     );
   }
   const sec = new SecClient({
-    userAgent: userAgent ?? "HypeCheck demo",
+    userAgent: userAgent ?? "Verifi demo",
     fetch: fixtures ? createFixtureFetch() : void 0
   });
-  const extractor = env.ANTHROPIC_API_KEY ? createAnthropicExtractor({ apiKey: env.ANTHROPIC_API_KEY, model: env.HYPECHECK_MODEL }) : createRuleBasedExtractor();
-  const releases = !fixtures && env.ANTHROPIC_API_KEY ? createEarningsReleases({ sec, reader: createAnthropicReleaseReader({ apiKey: env.ANTHROPIC_API_KEY, model: env.HYPECHECK_MODEL }) }) : void 0;
+  const extractor = env.ANTHROPIC_API_KEY ? createAnthropicExtractor({ apiKey: env.ANTHROPIC_API_KEY, model: env.VERIFI_MODEL ?? env.HYPECHECK_MODEL }) : createRuleBasedExtractor();
+  const releases = !fixtures && env.ANTHROPIC_API_KEY ? createEarningsReleases({ sec, reader: createAnthropicReleaseReader({ apiKey: env.ANTHROPIC_API_KEY, model: env.VERIFI_MODEL ?? env.HYPECHECK_MODEL }) }) : void 0;
   const finnhub = fixtures ? new FinnhubClient({ apiKey: "demo", fetch: createFinnhubFixtureFetch() }) : env.FINNHUB_API_KEY ? new FinnhubClient({ apiKey: env.FINNHUB_API_KEY }) : null;
   const sources = [createSecRevenueSource({ sec, releases }), createSecFigureSource({ sec, releases })];
   if (finnhub) sources.push(createFinnhubEarningsSource({ finnhub }), createFinnhubMarketSource({ finnhub }));
   const deps = { extractor, sources, cache: new MemoryCache() };
-  const screenshots = !fixtures && env.ANTHROPIC_API_KEY ? createAnthropicScreenshotReader({ apiKey: env.ANTHROPIC_API_KEY, model: env.HYPECHECK_MODEL }) : null;
+  const screenshots = !fixtures && env.ANTHROPIC_API_KEY ? createAnthropicScreenshotReader({ apiKey: env.ANTHROPIC_API_KEY, model: env.VERIFI_MODEL ?? env.HYPECHECK_MODEL }) : null;
   const tickerCards = createTickerSnapshots({ sec, finnhub });
   async function snapshots(raw) {
     const list = (Array.isArray(raw) ? raw : String(raw ?? "").split(",")).map((t) => normalizeTicker(t)).filter((t) => Boolean(t));
@@ -2159,7 +2159,7 @@ async function readPayload(req) {
   }
 }
 async function handler(req, res) {
-  const demo = process.env.HYPECHECK_DEMO === "1";
+  const demo = (process.env.VERIFI_DEMO ?? process.env.HYPECHECK_DEMO) === "1";
   try {
     checker ??= createChecker({ fixtures: demo, env: process.env });
   } catch (error) {
@@ -2184,7 +2184,7 @@ async function handler(req, res) {
     }
     const text = payload?.text;
     if (typeof text !== "string") throw new InputError('Send JSON like {"text": "..."}');
-    const device = cleanDeviceId(req.headers["x-hypecheck-device"]);
+    const device = cleanDeviceId(req.headers["x-verifi-device"] ?? req.headers["x-hypecheck-device"]);
     const { result, postHash } = await checker.check(text, { source: cleanSource(payload?.source), device });
     send(res, 200, { ...result, postHash });
   } catch (error) {

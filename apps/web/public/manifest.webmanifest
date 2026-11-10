@@ -1,6 +1,6 @@
 {
-  "name": "HypeCheck",
-  "short_name": "HypeCheck",
+  "name": "Verifi",
+  "short_name": "Verifi",
   "description": "Paste a stock post, get each claim checked against public filings.",
   "id": "/",
   "start_url": "/",

@@ -1,4 +1,4 @@
-import type { CheckResult } from '@hypecheck/check-core';
+import type { CheckResult } from '@verifi/check-core';
 
 // This device's copy of history and followed tickers. Guests use only this.
 // Signed-in users use it too, and account.ts keeps it in sync with their account.
@@ -14,12 +14,23 @@ export interface HistoryEntry {
   synced?: boolean;
 }
 
-const HISTORY_KEY = 'hypecheck.history.v1';
-const TICKERS_KEY = 'hypecheck.tickers.v1';
-const DEVICE_KEY = 'hypecheck.device.v1';
-const SYNCED_USER_KEY = 'hypecheck.synced-user.v1';
-const SEEN_KEY = 'hypecheck.tickers-seen.v1';
+const HISTORY_KEY = 'verifi.history.v1';
+const TICKERS_KEY = 'verifi.tickers.v1';
+const DEVICE_KEY = 'verifi.device.v1';
+const SYNCED_USER_KEY = 'verifi.synced-user.v1';
+const SEEN_KEY = 'verifi.tickers-seen.v1';
 const MAX_ENTRIES = 50;
+
+// The app was called HypeCheck. Carry over anything saved under the old names, once.
+try {
+  for (const key of [HISTORY_KEY, TICKERS_KEY, DEVICE_KEY, SYNCED_USER_KEY, SEEN_KEY]) {
+    const old = key.replace(/^verifi\./, 'hypecheck.');
+    const value = localStorage.getItem(old);
+    if (value !== null && localStorage.getItem(key) === null) localStorage.setItem(key, value);
+  }
+} catch {
+  // No storage available: nothing to carry over.
+}
 
 function read<T>(key: string, fallback: T): T {
   try {

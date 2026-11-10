@@ -1,4 +1,4 @@
--- HypeCheck database, version 1.
+-- Verifi database, version 1.
 --
 -- posts    one row per distinct post (matched by a hash of its cleaned text), with its latest result
 -- checks   one row each time anyone checks a post; no account or personal data

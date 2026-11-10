@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { cleanPostText } from '@hypecheck/check-core';
+import { cleanPostText } from '@verifi/check-core';
 import {
   addFollows,
   addHistory,
@@ -54,7 +54,7 @@ function viewFor(tab: Tab): View {
 }
 
 // Sync errors never interrupt the person; this device's copy keeps working.
-const logSyncError = (error: unknown) => console.error('HypeCheck sync:', error);
+const logSyncError = (error: unknown) => console.error('Verifi sync:', error);
 
 export function App() {
   const [view, setView] = useState<View>({ name: 'home' });
