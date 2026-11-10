@@ -1,3 +1,4 @@
+import { useRef, useState, type DragEvent } from 'react';
 import type { Mode } from '../api';
 import { Disclaimer, Logo, TopBar } from './ui';
 
@@ -26,6 +27,12 @@ const EXAMPLES: Record<Mode, { label: string; text: string }[]> = {
 interface HomeProps {
   text: string;
   onTextChange: (text: string) => void;
+  /** A screenshot the person picked or pasted. */
+  onScreenshot: (file: Blob) => void;
+  /** True while a screenshot is being read. */
+  reading: boolean;
+  /** True when the text in the box came from a screenshot. */
+  fromScreenshot: boolean;
   onSubmit: () => void;
   /** Signed-in email, or null for a guest. */
   email: string | null;
@@ -41,7 +48,43 @@ const PILLARS = [
   { label: 'No buy or sell calls', icon: <path d="M4 16V11M10 16V5M16 16V8" /> },
 ];
 
-export function Home({ text, onTextChange, onSubmit, email, onOpenAccount, loading, error, mode }: HomeProps) {
+export function Home({ text, onTextChange, onScreenshot, reading, fromScreenshot, onSubmit, email, onOpenAccount, loading, error, mode }: HomeProps) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const busy = loading || reading;
+  // Dragging over the form. A counter, because dragenter/dragleave fire for every child element.
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+
+  // Only file drags are taken over; dragging selected text into the box still works as usual.
+  const hasFiles = (event: DragEvent) => [...event.dataTransfer.types].includes('Files');
+  const drop = {
+    onDragEnter: (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      dragDepth.current += 1;
+      setDragging(true);
+    },
+    onDragOver: (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = busy ? 'none' : 'copy';
+    },
+    onDragLeave: (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDragging(false);
+    },
+    onDrop: (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      dragDepth.current = 0;
+      setDragging(false);
+      if (busy) return;
+      const image = [...event.dataTransfer.files].find((f) => f.type.startsWith('image/'));
+      if (image) onScreenshot(image);
+    },
+  };
+
   return (
     <>
       <TopBar
@@ -85,13 +128,14 @@ export function Home({ text, onTextChange, onSubmit, email, onOpenAccount, loadi
         </h1>
 
         <p className="text-[15px] leading-normal text-body">
-          Paste a post from social media (X, Reddit, etc.).
+          Paste a post or upload a screenshot from social media (X, Reddit, etc.).
           <br/>
-          We'll check the claim against the company's SEC filings.
+          We'll check each claim against SEC filings and market data.
         </p>
 
         <form
-          className="flex flex-col gap-3 rounded-2xl border border-line bg-white p-3.5 shadow-sm"
+          {...drop}
+          className={`flex flex-col gap-3 rounded-2xl border bg-white p-3.5 shadow-sm ${dragging ? 'border-teal-dark ring-2 ring-teal-soft' : 'border-line'}`}
           onSubmit={(event) => {
             event.preventDefault();
             onSubmit();
@@ -121,10 +165,53 @@ export function Home({ text, onTextChange, onSubmit, email, onOpenAccount, loadi
             id="post"
             rows={5}
             value={text}
+            disabled={reading}
             onChange={(event) => onTextChange(event.target.value)}
-            placeholder="$AAPL revenue hit $109B last quarter, up 30% from a year ago..."
-            className="w-full resize-none rounded-xl border border-dash bg-ground p-3 text-base leading-snug text-ink placeholder:text-muted"
+            onPaste={(event) => {
+              // A screenshot pasted into the box (desktop, or iPhone "Copy" on an image).
+              const image = [...event.clipboardData.files].find((f) => f.type.startsWith('image/'));
+              if (image) {
+                event.preventDefault();
+                onScreenshot(image);
+              }
+            }}
+            placeholder={
+              dragging ? 'Drop the screenshot here' : reading ? 'Reading your screenshot…' : '$AAPL revenue hit $109B last quarter, up 30% from a year ago...'
+            }
+            className={`w-full resize-none rounded-xl border p-3 text-base leading-snug text-ink placeholder:text-muted disabled:opacity-60 ${
+              dragging ? 'border-teal-dark bg-teal-soft/40' : 'border-dash bg-ground'
+            }`}
           />
+          {fromScreenshot && text && !reading && (
+            <p className="rounded-lg bg-teal-soft px-3 py-2 text-[13px] leading-snug font-medium text-teal-deep">
+              Read from your screenshot. Fix anything it got wrong, then check. The screenshot isn't saved.
+            </p>
+          )}
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              // Reset so picking the same screenshot again still fires.
+              event.target.value = '';
+              if (file) onScreenshot(file);
+            }}
+          />
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => fileInput.current?.click()}
+            className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dash bg-white text-[15px] font-semibold text-navy disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="2.5" y="3.5" width="15" height="13" rx="2" />
+              <circle cx="7" cy="8" r="1.5" />
+              <path d="M17.5 13l-4-4-7.5 7.5" />
+            </svg>
+            {reading ? 'Reading screenshot…' : 'Upload a screenshot (or drag one in)'}
+          </button>
           {error && (
             <p role="alert" className="rounded-lg bg-contra-soft px-3 py-2 text-sm font-medium text-contra">
               {error}
@@ -132,7 +219,7 @@ export function Home({ text, onTextChange, onSubmit, email, onOpenAccount, loadi
           )}
           <button
             type="submit"
-            disabled={loading || !text.trim()}
+            disabled={busy || !text.trim()}
             className="flex h-[50px] cursor-pointer items-center justify-center gap-2 rounded-xl bg-navy text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? 'Checking the filings…' : 'Check claims'}

@@ -1,9 +1,18 @@
 export * from './types';
 export { checkPost, InputError, MAX_POST_LENGTH, type CheckDeps } from './pipeline';
 export { MemoryCache, type EvidenceCache } from './cache';
-export { EMPTY_CLAIM, type ClaimExtractor, type ReleaseReader, type ReleaseReading } from './llm/types';
+export {
+  EMPTY_CLAIM,
+  type ClaimExtractor,
+  type ReleaseReader,
+  type ReleaseReading,
+  type ScreenshotImage,
+  type ScreenshotReader,
+  type ScreenshotReading,
+} from './llm/types';
 export { createAnthropicExtractor } from './llm/anthropic';
 export { createAnthropicReleaseReader } from './llm/anthropicRelease';
+export { MAX_IMAGE_BYTES, createAnthropicScreenshotReader, parseImageDataUrl } from './llm/anthropicScreenshot';
 export { createRuleBasedExtractor } from './llm/ruleBased';
 export { normalizeClaims, normalizeTicker } from './llm/normalize';
 export type { EvidenceSource, Evaluation } from './sources/types';
@@ -26,3 +35,11 @@ export { createFinnhubMarketSource, evaluateMarketClaim } from './sources/finnhu
 export { createFinnhubEarningsSource, evaluateEarningsClaim } from './sources/finnhub/earningsSource';
 export { cleanPostText } from './text';
 export { formatDate, formatUsd, formatSignedPercent, formatPerShare, formatPrice, formatTime } from './format';
+export {
+  MAX_SNAPSHOT_TICKERS,
+  createTickerSnapshots,
+  filingLabel as describeFiling,
+  type TickerFiling,
+  type TickerSnapshot,
+  type TickerSnapshots,
+} from './snapshots/tickerSnapshot';

@@ -1,4 +1,4 @@
-import type { CheckResult } from '@hypecheck/check-core';
+import type { CheckResult, TickerSnapshot } from '@hypecheck/check-core';
 import { getDeviceId } from './storage';
 
 // Empty in dev (Vite proxies /api). Set VITE_API_URL when the API is hosted elsewhere.
@@ -23,7 +23,29 @@ export async function getMode(): Promise<Mode | null> {
   }
 }
 
-export async function checkPost(text: string): Promise<CheckResponse> {
+/** Where the post text came from, for the check log. */
+export type PostSource = 'paste' | 'screenshot';
+
+/** Copy the post text out of a screenshot. Nothing is checked or saved yet; the screenshot is not kept. */
+export async function readScreenshot(image: string): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api/check`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ image }),
+    });
+  } catch {
+    throw new Error("Can't reach HypeCheck. Check your connection and try again.");
+  }
+  const data = (await res.json().catch(() => null)) as { text?: unknown; error?: string } | null;
+  if (!res.ok || typeof data?.text !== 'string') {
+    throw new Error(data?.error ?? "The screenshot couldn't be read. Try again, or paste the text.");
+  }
+  return data.text;
+}
+
+export async function checkPost(text: string, source: PostSource = 'paste'): Promise<CheckResponse> {
   let res: Response;
   try {
     res = await fetch(`${BASE}/api/check`, {
@@ -31,7 +53,7 @@ export async function checkPost(text: string): Promise<CheckResponse> {
       // The device id is a random value from this browser, so the server can tell
       // "5 checks from 5 phones" apart from "5 checks from one phone".
       headers: { 'content-type': 'application/json', 'x-hypecheck-device': getDeviceId() },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, source }),
     });
   } catch {
     throw new Error("Can't reach HypeCheck. Check your connection and try again.");
@@ -43,4 +65,14 @@ export async function checkPost(text: string): Promise<CheckResponse> {
   }
   const { postHash, error: _error, ...result } = data;
   return { result, postHash: typeof postHash === 'string' ? postHash : null };
+}
+
+/** Today's cards for followed tickers. Sorted so every phone following the same list shares one cached answer. */
+export async function fetchSnapshots(tickers: string[]): Promise<TickerSnapshot[]> {
+  const list = [...new Set(tickers)].sort().slice(0, 12);
+  if (list.length === 0) return [];
+  const res = await fetch(`${BASE}/api/check?tickers=${encodeURIComponent(list.join(','))}`);
+  const data = (await res.json().catch(() => null)) as { snapshots?: TickerSnapshot[]; error?: string } | null;
+  if (!res.ok || !Array.isArray(data?.snapshots)) throw new Error(data?.error ?? "Couldn't load today's numbers.");
+  return data.snapshots;
 }

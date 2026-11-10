@@ -18,6 +18,7 @@ const HISTORY_KEY = 'hypecheck.history.v1';
 const TICKERS_KEY = 'hypecheck.tickers.v1';
 const DEVICE_KEY = 'hypecheck.device.v1';
 const SYNCED_USER_KEY = 'hypecheck.synced-user.v1';
+const SEEN_KEY = 'hypecheck.tickers-seen.v1';
 const MAX_ENTRIES = 50;
 
 function read<T>(key: string, fallback: T): T {
@@ -93,4 +94,13 @@ export function saveSyncedUser(userId: string | null): void {
       // Nothing to do.
     }
   }
+}
+
+/** The date (YYYY-MM-DD) each ticker's card was last seen here, so newer filings can be marked "New". */
+export function loadSeen(): Record<string, string> {
+  return read<Record<string, string>>(SEEN_KEY, {});
+}
+
+export function saveSeen(seen: Record<string, string>): void {
+  write(SEEN_KEY, seen);
 }

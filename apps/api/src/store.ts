@@ -11,6 +11,11 @@ import { cleanPostText, type CheckResult } from '@hypecheck/check-core';
 
 export type CheckSource = 'paste' | 'screenshot' | 'share' | 'cli';
 
+/** What the app may say a post came from. Anything else counts as a paste. */
+export function cleanSource(value: unknown): CheckSource {
+  return value === 'screenshot' ? 'screenshot' : 'paste';
+}
+
 export interface SavedPost {
   result: CheckResult;
   extractor: string;

@@ -6,9 +6,15 @@ import {
   cleanPostText,
   createAnthropicExtractor,
   createAnthropicReleaseReader,
+  createAnthropicScreenshotReader,
+  InputError,
+  parseImageDataUrl,
   createEarningsReleases,
   createFinnhubEarningsSource,
   createFinnhubMarketSource,
+  createTickerSnapshots,
+  normalizeTicker,
+  type TickerSnapshot,
   createRuleBasedExtractor,
   createSecFigureSource,
   createSecRevenueSource,
@@ -52,8 +58,15 @@ export interface CheckOutcome {
   postHash: string | null;
 }
 
+/** The server can't read screenshots (no ANTHROPIC_API_KEY, or demo mode). */
+export class NotConfiguredError extends Error {}
+
 export interface Checker {
   check(text: string, meta?: CheckMeta): Promise<CheckOutcome>;
+  /** Copy the post text out of a screenshot (a data URL). The screenshot itself is not kept anywhere. */
+  readScreenshot(image: unknown): Promise<{ text: string; platform: string | null }>;
+  /** Daily cards for followed tickers: price, earnings, new SEC filings. "AAPL,NVDA" or a list. */
+  snapshots(tickers: unknown): Promise<TickerSnapshot[]>;
   describe(): string;
 }
 
@@ -93,6 +106,29 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
   if (finnhub) sources.push(createFinnhubEarningsSource({ finnhub }), createFinnhubMarketSource({ finnhub }));
 
   const deps: CheckDeps = { extractor, sources, cache: new MemoryCache() };
+
+  // Screenshots are read by the same model, with vision. Off without a key and in demo mode.
+  const screenshots =
+    !fixtures && env.ANTHROPIC_API_KEY ? createAnthropicScreenshotReader({ apiKey: env.ANTHROPIC_API_KEY, model: env.HYPECHECK_MODEL }) : null;
+
+  const tickerCards = createTickerSnapshots({ sec, finnhub });
+
+  async function snapshots(raw: unknown): Promise<TickerSnapshot[]> {
+    const list = (Array.isArray(raw) ? raw : String(raw ?? '').split(','))
+      .map((t) => normalizeTicker(t))
+      .filter((t): t is string => Boolean(t));
+    if (list.length === 0) throw new InputError('Send tickers like ?tickers=AAPL,NVDA');
+    return tickerCards.get(list);
+  }
+
+  async function readScreenshot(raw: unknown) {
+    if (!screenshots) throw new NotConfiguredError("Screenshot reading isn't set up on this server. Paste the post's text instead.");
+    const image = parseImageDataUrl(raw);
+    if (!image) throw new InputError("That file isn't a supported image. Use a JPEG or PNG screenshot.");
+    const reading = await screenshots.read(image);
+    if (!reading.text) throw new InputError("Couldn't find a post in that screenshot. Try one that shows the post's text.");
+    return reading;
+  }
 
   // Demo checks are never saved, so the made-up company stays out of the data.
   const store: CheckStore | null = fixtures ? null : createSupabaseStore(env);
@@ -137,12 +173,15 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
 
   return {
     check,
+    readScreenshot,
+    snapshots,
     describe: () =>
       [
         `extractor: ${extractor.name}`,
         `data: ${fixtures ? 'demo fixtures' : 'live SEC'}`,
         `earnings releases: ${releases ? 'on' : 'off'}`,
         `market data: ${finnhub ? (fixtures ? 'demo fixtures' : 'Finnhub') : 'off (set FINNHUB_API_KEY)'}`,
+        `screenshots: ${screenshots ? 'on' : 'off'}`,
         `saving: ${store ? 'Supabase' : 'off'}`,
       ].join(', '),
   };

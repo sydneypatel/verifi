@@ -31,6 +31,9 @@ Add `ANTHROPIC_API_KEY` to `.env` to have an LLM read the post (and earnings pre
 Without it, a small rule-based extractor is used, which only understands phrasings like
 "revenue is up 40%", "up 12% today", "beat earnings" or "a $3T company".
 
+Screenshot upload uses the same `ANTHROPIC_API_KEY` (vision). Without it, the button shows a
+"not set up" message and pasting still works.
+
 Add `FINNHUB_API_KEY` (free at https://finnhub.io/dashboard) to check earnings vs estimates,
 price moves and market value. Without it, those claims show as "can't be checked".
 

@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { TickerSnapshot } from '@hypecheck/check-core';
+import { fetchSnapshots } from '../api';
 import { tickersOf } from '../post';
-import type { HistoryEntry } from '../storage';
+import { loadSeen, saveSeen, type HistoryEntry } from '../storage';
+import { TickerCard } from './TickerCard';
 import { TopBar, VerdictBadge } from './ui';
 
 interface TickersProps {
@@ -21,6 +24,34 @@ interface TickerRow {
 export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }: TickersProps) {
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [snapshots, setSnapshots] = useState<Record<string, TickerSnapshot>>({});
+  const [loadingCards, setLoadingCards] = useState(false);
+  // What was seen before this visit, read once, so filings stay marked NEW while you look.
+  const [seenBefore] = useState(loadSeen);
+
+  // Fresh numbers each time the tab opens or the followed list changes. The server caches for 10 minutes.
+  const followedKey = [...followed].sort().join(',');
+  useEffect(() => {
+    if (!followedKey) return;
+    let cancelled = false;
+    setLoadingCards(true);
+    fetchSnapshots(followedKey.split(','))
+      .then((list) => {
+        if (cancelled) return;
+        setSnapshots(Object.fromEntries(list.map((s) => [s.ticker, s])));
+        // Everything shown now counts as seen next time.
+        const today = new Date().toISOString().slice(0, 10);
+        saveSeen({ ...loadSeen(), ...Object.fromEntries(list.map((s) => [s.ticker, today])) });
+      })
+      .catch((err) => console.error('Ticker cards:', err))
+      .finally(() => !cancelled && setLoadingCards(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [followedKey]);
+
+  // A ticker never seen here: filings from the past week count as new.
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
 
   // Every followed ticker, plus every ticker you have checked a post about.
   const rows = new Map<string, TickerRow>();
@@ -33,7 +64,11 @@ export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }
       rows.set(t, row);
     }
   }
-  const list = [...rows.values()].sort((a, b) => b.checks.length - a.checks.length || a.ticker.localeCompare(b.ticker));
+  // Followed tickers first, the newest follow on top; then the rest, most-checked first.
+  const all = [...rows.values()];
+  const following = all.filter((r) => r.following).sort((a, b) => followed.indexOf(b.ticker) - followed.indexOf(a.ticker));
+  const others = all.filter((r) => !r.following).sort((a, b) => b.checks.length - a.checks.length || a.ticker.localeCompare(b.ticker));
+  const list = [...following, ...others];
 
   function submit() {
     const t = input.trim().replace(/^\$/, '').toUpperCase();
@@ -89,15 +124,18 @@ export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }
           </p>
         )}
 
-        {list.map((row) => (
-          <section key={row.ticker} className={`flex flex-col gap-3 rounded-2xl bg-white p-3.5 ${row.checks.length ? 'border-2 border-navy' : 'border border-line'}`}>
+        {list.map((row, i) => (
+          <div key={row.ticker} className="flex flex-col gap-2">
+          {i === 0 && following.length > 0 && <h2 className="pt-1 text-xs font-bold tracking-wider text-muted">FOLLOWING</h2>}
+          {i === following.length && others.length > 0 && <h2 className="pt-2 text-xs font-bold tracking-wider text-muted">FROM POSTS YOU'VE CHECKED</h2>}
+          <section className={`flex flex-col gap-3 rounded-2xl bg-white p-3.5 ${row.checks.length ? 'border-2 border-navy' : 'border border-line'}`}>
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2.5">
                 <span className={`flex h-10 min-w-10 items-center justify-center rounded-lg px-1 text-xs font-extrabold ${row.checks.length ? 'bg-navy text-white' : 'bg-line text-navy'}`}>
                   {row.ticker}
                 </span>
                 <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-base font-bold text-ink">{row.name ?? row.ticker}</span>
+                  <span className="truncate text-base font-bold text-ink">{row.name ?? snapshots[row.ticker]?.name ?? row.ticker}</span>
                   <span className="text-xs text-muted">
                     {row.checks.length ? `${row.checks.length} ${row.checks.length === 1 ? 'check' : 'checks'}` : 'No checks yet'}
                   </span>
@@ -113,6 +151,8 @@ export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }
                 </button>
               )}
             </div>
+
+            {row.following && <TickerCard snapshot={snapshots[row.ticker]} loading={loadingCards} seenThrough={seenBefore[row.ticker] ?? weekAgo} />}
 
             {row.checks.length > 0 && (
               <div className="flex flex-col">
@@ -135,6 +175,7 @@ export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }
               </div>
             )}
           </section>
+          </div>
         ))}
         {/* coming soon: */}
         {/* <div className="mt-auto flex items-start gap-2.5 rounded-xl bg-mint px-3.5 py-3">

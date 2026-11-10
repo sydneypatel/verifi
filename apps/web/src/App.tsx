@@ -12,7 +12,7 @@ import {
   removeHistory,
   signOut,
 } from './account';
-import { checkPost, getMode, type Mode } from './api';
+import { checkPost, getMode, readScreenshot, type Mode } from './api';
 import { Account } from './components/Account';
 import { History } from './components/History';
 import { Home } from './components/Home';
@@ -20,6 +20,7 @@ import { Receipt } from './components/Receipt';
 import { Results } from './components/Results';
 import { Tickers } from './components/Tickers';
 import { TabBar, type Tab } from './components/ui';
+import { shrinkImage } from './image';
 import {
   loadFollowed,
   loadHistory,
@@ -60,6 +61,9 @@ export function App() {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set while a screenshot is being read, and after, until the text is cleared.
+  const [reading, setReading] = useState(false);
+  const [fromScreenshot, setFromScreenshot] = useState(false);
   const [mode, setMode] = useState<Mode | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const [followed, setFollowed] = useState<string[]>(loadFollowed);
@@ -129,13 +133,35 @@ export function App() {
     };
   }, [userId]);
 
+  function changeText(next: string) {
+    setText(next);
+    // Edits keep the screenshot tag (fixing a misread is the point); clearing drops it.
+    if (!next.trim()) setFromScreenshot(false);
+  }
+
+  async function readScreenshotFile(file: Blob) {
+    if (reading || loading) return;
+    setReading(true);
+    setError(null);
+    try {
+      const image = await shrinkImage(file);
+      const postText = await readScreenshot(image);
+      setText(postText);
+      setFromScreenshot(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The screenshot couldn't be read.");
+    } finally {
+      setReading(false);
+    }
+  }
+
   async function submit() {
-    if (loading || !text.trim()) return;
+    if (loading || reading || !text.trim()) return;
     setLoading(true);
     setError(null);
     try {
       const cleaned = cleanPostText(text);
-      const { result, postHash } = await checkPost(cleaned);
+      const { result, postHash } = await checkPost(cleaned, fromScreenshot ? 'screenshot' : 'paste');
       const entry = newEntry(cleaned, result, postHash);
       setHistory((h) => [entry, ...h]);
       setView({ name: 'results', entryId: entry.id, from: 'check' });
@@ -243,7 +269,10 @@ export function App() {
     screen = (
       <Home
         text={text}
-        onTextChange={setText}
+        onTextChange={changeText}
+        onScreenshot={readScreenshotFile}
+        reading={reading}
+        fromScreenshot={fromScreenshot}
         onSubmit={submit}
         email={email}
         onOpenAccount={openAccount}

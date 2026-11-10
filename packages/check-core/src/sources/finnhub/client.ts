@@ -41,6 +41,17 @@ export interface FinnhubEarnings {
   symbol: string;
 }
 
+export interface FinnhubCalendarRow {
+  /** "2026-11-19" */
+  date: string;
+  /** "bmo" before the open, "amc" after the close, "dmh" during market hours, or empty. */
+  hour?: string;
+  quarter?: number;
+  year?: number;
+  epsEstimate?: number | null;
+  symbol: string;
+}
+
 export class FinnhubClient {
   private fetchImpl: FetchLike;
 
@@ -67,6 +78,12 @@ export class FinnhubClient {
 
   metrics(symbol: string) {
     return this.get<FinnhubMetrics>('/stock/metric', { symbol, metric: 'all' });
+  }
+
+  /** Upcoming (or recent) earnings dates for one symbol between two ISO dates. */
+  async earningsCalendar(symbol: string, from: string, to: string): Promise<FinnhubCalendarRow[]> {
+    const data = await this.get<{ earningsCalendar?: FinnhubCalendarRow[] } | null>('/calendar/earnings', { from, to, symbol });
+    return Array.isArray(data?.earningsCalendar) ? data!.earningsCalendar! : [];
   }
 
   /** The last four quarters of EPS, actual vs the analyst estimate, newest first. */

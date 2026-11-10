@@ -42,6 +42,29 @@ export interface ReleaseReader {
   read(releaseText: string): Promise<ReleaseReading | null>;
 }
 
+/** A screenshot the person uploaded, already decoded from a data URL. */
+export interface ScreenshotImage {
+  mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+  /** Base64, without the "data:...;base64," prefix. */
+  data: string;
+}
+
+export interface ScreenshotReading {
+  /** The post's own words, ready to check. Empty when no post was found. */
+  text: string;
+  /** Where the post seems to be from ("X", "Reddit"), if it can tell. */
+  platform: string | null;
+}
+
+/**
+ * Copies the text of a social post out of a screenshot. The person sees and can
+ * fix the text before it is checked, so a misread never reaches a verdict unseen.
+ */
+export interface ScreenshotReader {
+  name: string;
+  read(image: ScreenshotImage): Promise<ScreenshotReading>;
+}
+
 export const CLAIM_TYPES = [
   'revenue_growth',
   'financial_figure',

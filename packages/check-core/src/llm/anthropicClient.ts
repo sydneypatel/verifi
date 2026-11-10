@@ -22,7 +22,14 @@ export const nullable = (schema: Record<string, unknown>) => ({ anyOf: [schema, 
 /** One request, one JSON object back that matches `schema`. Throws on any failure. */
 export async function callStructured(
   options: AnthropicOptions,
-  request: { system: string; user: string; schema: Record<string, unknown>; maxTokens: number; what: string },
+  request: {
+    system: string;
+    /** Plain text, or content blocks (text and images) for a vision request. */
+    user: string | Array<Record<string, unknown>>;
+    schema: Record<string, unknown>;
+    maxTokens: number;
+    what: string;
+  },
 ): Promise<unknown> {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const res = await fetchImpl('https://api.anthropic.com/v1/messages', {

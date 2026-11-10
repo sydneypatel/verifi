@@ -111,6 +111,19 @@ saved result with a price check is reused for five minutes instead of six hours.
 Finnhub's EPS is the adjusted figure analysts track, which can differ from GAAP EPS in the
 filing. The reason says so.
 
+## Screenshots
+
+A screenshot gets the post's text without scraping any platform: the person brings the post.
+
+1. The app shrinks the image on the phone (at most 1800 px on the long edge, JPEG), well under
+   Vercel's 4.5 MB request cap.
+2. `POST /api/check { image }` has the model (vision) copy only the post's words: no names,
+   handles, counts or app buttons. Nothing is checked or saved at this step.
+3. The text goes into the post box and the person can fix it before checking. A misread is
+   visible before it can reach a verdict.
+4. The check is logged with `source: 'screenshot'`. The image is never stored, and only the
+   text is saved, as with a paste.
+
 ## Known limits
 
 - **Segment figures.** "Revenue up 300%" that is true of one business segment shows as
