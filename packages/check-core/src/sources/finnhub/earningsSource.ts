@@ -46,10 +46,10 @@ function factsText(q: EarningsQuarter): string {
   return `For ${quarterWords(q)}, EPS was ${formatPerShare(q.actual)} against an analyst estimate of ${formatPerShare(q.estimate)}${surprise}.`;
 }
 
-/** The quarter the claim is about: the one it names, or the latest reported. */
+/** The quarter the claim is about: the one it names, or the latest reported (by the post's date, when known). */
 function targetOf(claim: Claim, quarters: EarningsQuarter[]): EarningsQuarter | undefined {
   const reported = quarters.filter((q) => q.actual !== null);
-  if (!claim.fiscalQuarter) return reported[0];
+  if (!claim.fiscalQuarter) return claim.postedAt ? reported.find((q) => q.period < claim.postedAt!) : reported[0];
   // The company's own label first; the calendar quarter only as a fallback.
   const fiscal = reported.find((q) => q.fiscalQuarter === claim.fiscalQuarter && (!claim.fiscalYear || q.fiscalYear === claim.fiscalYear));
   if (fiscal) return fiscal;
@@ -61,10 +61,34 @@ function targetOf(claim: Claim, quarters: EarningsQuarter[]): EarningsQuarter | 
 
 const RANK: Record<Verdict, number> = { contradicted: 3, misleading: 2, holds_up: 1, cant_check: 0 };
 
+/** True when "Q{quarter} {year}" comes after every quarter on record, by fiscal or calendar label. */
+function afterNewest(claim: Claim, quarters: EarningsQuarter[]): boolean {
+  if (!claim.fiscalQuarter || !claim.fiscalYear) return false;
+  const reported = quarters.filter((q) => q.actual !== null);
+  const newest = reported[0];
+  if (!newest) return false;
+  const named = claim.fiscalYear * 4 + claim.fiscalQuarter;
+  const calendar = Number(newest.period.slice(0, 4)) * 4 + Math.ceil(Number(newest.period.slice(5, 7)) / 3);
+  const fiscal = newest.fiscalYear && newest.fiscalQuarter ? newest.fiscalYear * 4 + newest.fiscalQuarter : null;
+  // With fiscal labels, only when it is later by both readings: "Q1 2027" can be a fiscal label already on record.
+  return fiscal !== null ? named > calendar && named > fiscal : named > calendar;
+}
+
 /** Pure comparison of an earnings claim with reported EPS and estimates. */
 export function evaluateEarningsClaim(claim: Claim, evidence: EarningsEvidence): Evaluation {
+  // "EPS up 40% YoY" is growth. A beat against estimates says nothing about it.
+  if (claim.vsEstimate === null && claim.claimedAmount === null && claim.claimedPercent !== null) {
+    return { verdict: 'cant_check', reason: "This is about EPS growth, not a beat or miss. Verifi checks EPS against analyst estimates, and doesn't check EPS growth yet." };
+  }
   if (claim.vsEstimate === null && claim.claimedAmount === null) {
     return { verdict: 'cant_check', reason: "The post doesn't say how earnings compared with estimates or give a per-share figure." };
+  }
+  if (afterNewest(claim, evidence.quarters)) {
+    const newest = evidence.quarters.find((q) => q.actual !== null)!;
+    return {
+      verdict: 'cant_check',
+      reason: `Q${claim.fiscalQuarter} ${claim.fiscalYear} isn't reported yet, so ${evidence.ticker}'s EPS for it can't be checked. The newest quarter on record is ${quarterWords(newest)}.`,
+    };
   }
   const q = targetOf(claim, evidence.quarters);
   if (!q) {
@@ -142,7 +166,8 @@ export function createFinnhubEarningsSource({ finnhub }: { finnhub: FinnhubClien
     // Estimates and results change at most once a quarter.
     ttlMs: 6 * 60 * 60 * 1000,
 
-    supports: (claim) => claim.type === 'earnings_result',
+    // Earnings per share only: an EPS beat is no evidence for a revenue, guidance or cash-flow claim.
+    supports: (claim) => claim.type === 'earnings_result' && !claim.segment && (claim.metric === null || claim.metric === 'eps'),
 
     cacheKey: (claim) => `finnhub-earnings:${claim.ticker ?? ''}`,
 

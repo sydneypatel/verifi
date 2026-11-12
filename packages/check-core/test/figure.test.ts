@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY_CLAIM, SecClient, createSecFigureSource, evaluateFigureClaim } from '../src';
 import { createFixtureFetch } from '../src/fixtures';
-import type { Claim, FigureEvidence, Metric, ReportedPeriod } from '../src/types';
+import type { Claim, FigureEvidence, FigureMetric, Metric, ReportedPeriod } from '../src/types';
 
 const sec = new SecClient({ userAgent: 'test test@example.com', fetch: createFixtureFetch() });
 const source = createSecFigureSource({ sec });
@@ -131,7 +131,7 @@ describe('dollar figures: quarter labels', () => {
     ticker: 'OFFS',
     entityName: 'Offset Co',
     asOf: '2026-06-27',
-    metric: 'revenue' as Exclude<Metric, 'other'>,
+    metric: 'revenue' as FigureMetric,
     cik: 1,
     quarters: [period({}), period({ start: '2025-12-28', end: '2026-03-28', value: 111_200 * M, fiscalQuarter: 2 })],
     years: [],

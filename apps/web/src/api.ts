@@ -45,7 +45,8 @@ export async function readScreenshot(image: string): Promise<string> {
   return data.text;
 }
 
-export async function checkPost(text: string, source: PostSource = 'paste'): Promise<CheckResponse> {
+/** postedAt: when the post was written ("Nov 9", "2d ago"), so "today" in it is read against that day. */
+export async function checkPost(text: string, source: PostSource = 'paste', postedAt?: string): Promise<CheckResponse> {
   let res: Response;
   try {
     res = await fetch(`${BASE}/api/check`, {
@@ -53,7 +54,7 @@ export async function checkPost(text: string, source: PostSource = 'paste'): Pro
       // The device id is a random value from this browser, so the server can tell
       // "5 checks from 5 phones" apart from "5 checks from one phone".
       headers: { 'content-type': 'application/json', 'x-verifi-device': getDeviceId() },
-      body: JSON.stringify({ text, source }),
+      body: JSON.stringify({ text, source, ...(postedAt?.trim() ? { postedAt: postedAt.trim() } : {}) }),
     });
   } catch {
     throw new Error("Can't reach Verifi. Check your connection and try again.");

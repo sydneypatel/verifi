@@ -130,7 +130,7 @@ describe('checkPost', () => {
     };
     const result = await checkPost('post', { ...deps(), extractor });
     expect(result.claims[0]).toMatchObject({ verdict: 'cant_check', reason: expect.stringContaining("doesn't say how revenue changed") });
-    expect(result.claims[1]).toMatchObject({ verdict: 'cant_check', reason: 'Verifi can only check revenue and net income figures so far.' });
+    expect(result.claims[1]).toMatchObject({ verdict: 'cant_check', reason: 'Verifi can only check revenue, operating income and net income figures so far.' });
   });
 
   it('keeps each claim on its own stock in a multi-stock post', async () => {

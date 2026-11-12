@@ -14,6 +14,8 @@ const evidence: RevenueEvidence = {
   entityName: 'Tallgrass Solar, Inc.',
   asOf: summary.latest.periodEnd,
   bases: summary.bases,
+  quarters: summary.quarters,
+  years: summary.years,
   figures: [],
   citation: { label: '', url: '' },
 };

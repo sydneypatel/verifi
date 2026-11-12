@@ -11,6 +11,8 @@ export type ClaimType =
   | 'market_cap'
   | 'prediction'
   | 'opinion'
+  /** The poster's own gain or loss ("I'm up 40% on this"). Set aside, never checked. */
+  | 'personal'
   | 'other';
 
 export type Verdict = 'holds_up' | 'misleading' | 'contradicted' | 'cant_check';
@@ -21,8 +23,24 @@ export type Period = 'quarter' | 'year';
 export type Bound = 'at_least' | 'at_most';
 export type Quarter = 1 | 2 | 3 | 4;
 
-/** Which reported number a dollar-figure claim is about. */
-export type Metric = 'revenue' | 'net_income' | 'other';
+/**
+ * Which measure a claim is about. Dollar-figure claims use revenue, operating_income,
+ * net_income, free_cash_flow or other. Earnings claims use eps (the default), or
+ * revenue, guidance or free_cash_flow when the post says those beat or missed.
+ */
+export type Metric = 'revenue' | 'operating_income' | 'net_income' | 'eps' | 'free_cash_flow' | 'guidance' | 'other';
+
+/** The measures SEC dollar figures are checked for. */
+export type FigureMetric = 'revenue' | 'operating_income' | 'net_income';
+
+/** What a growth claim compares: the same period a year earlier, or the period just before. */
+export type Comparison = 'yoy' | 'qoq';
+
+/** Price moves outside regular trading hours. */
+export type Session = 'pre_market' | 'after_hours';
+
+/** What a price move is measured from: "down 30% from its highs". */
+export type PriceReference = 'high_52_week' | 'high_all_time' | 'high';
 
 /** "Beat estimates", "missed", "in line with expectations". */
 export type EstimateResult = 'beat' | 'miss' | 'in_line';
@@ -59,8 +77,23 @@ export interface Claim {
   bound: Bound | null;
   /** Earnings claims: whether the post says the company beat or missed analyst estimates. */
   vsEstimate: EstimateResult | null;
-  /** Price-move claims: the time span the move is said to cover. */
+  /** Price-move and market-value-change claims: the time span the move is said to cover. */
   window: PriceWindow | null;
+  /**
+   * Price-move and market-value-change claims: the span in days when it is not one of
+   * the windows ("48 hours" is 2, "3 years" is 1095, "since IPO" or "all time" is 36500).
+   */
+  windowDays: number | null;
+  /** Price-move claims: set for pre-market or after-hours moves. */
+  session: Session | null;
+  /** Price-move claims: the move is measured from a high, not over a time span. */
+  reference: PriceReference | null;
+  /** Growth claims: year over year or quarter over quarter, when the post says. */
+  comparison: Comparison | null;
+  /** The business line the claim is about ("Azure", "ad revenue", "data center"), or null for the whole company. */
+  segment: string | null;
+  /** The day the post was written (YYYY-MM-DD, New York time), when known. "Today" and "this week" mean that day's. */
+  postedAt: string | null;
 }
 
 /** What the LLM (or the rule-based fallback) returns: a claim without an id. */
@@ -104,6 +137,8 @@ export interface ReportedPeriod extends PeriodValue {
   derived: boolean;
   /** url: a direct link to the document when it is not the filing's folder (an earnings release). */
   filing: { accession: string; form: string; filed: string; url?: string };
+  /** When the period was first reported (later filings repeat it as a comparison). */
+  firstFiled?: string;
 }
 
 interface EvidenceBase {
@@ -118,12 +153,16 @@ interface EvidenceBase {
 
 export interface RevenueEvidence extends EvidenceBase {
   kind: 'revenue_growth';
+  /** Growth for the latest periods on file. */
   bases: GrowthBasis[];
+  /** Every quarter and year on file, newest first, so a claim about an earlier period can be checked. */
+  quarters: ReportedPeriod[];
+  years: ReportedPeriod[];
 }
 
 export interface FigureEvidence extends EvidenceBase {
   kind: 'financial_figure';
-  metric: Exclude<Metric, 'other'>;
+  metric: FigureMetric;
   cik: number;
   /** Newest first. */
   quarters: ReportedPeriod[];
@@ -157,6 +196,8 @@ export interface MarketEvidence extends EvidenceBase {
   returns: Partial<Record<PriceWindow, number>>;
   /** Market value in US dollars. */
   marketCap: number | null;
+  /** The highest price of the past 52 weeks, and the day it was reached. */
+  high52Week?: { price: number; date: string | null } | null;
 }
 
 // Add new evidence kinds to this union as adapters are added
@@ -186,5 +227,7 @@ export interface CheckResult {
   };
   /** Which extractor read the post, e.g. "anthropic:claude-haiku-4-5" or "rule-based". */
   extractor: string;
+  /** The day the post was written (YYYY-MM-DD, New York), when known. Missing on results saved before it existed. */
+  postedAt?: string | null;
   checkedAt: string;
 }

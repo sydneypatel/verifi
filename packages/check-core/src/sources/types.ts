@@ -25,3 +25,11 @@ export interface EvidenceSource {
   /** Pure comparison of claim and evidence. No network, no LLM. */
   evaluate(claim: Claim, evidence: Evidence): Evaluation;
 }
+
+/** Finds listed companies by name, so a post that names a company without a ticker can still be checked. */
+export interface CompanyDirectory {
+  /** The listed company with this name ("CoreWeave" -> CRWV), or null if none or more than one fits. */
+  findByName(name: string): Promise<{ ticker: string; title: string } | null>;
+  /** The company name listed for a ticker, or null if the ticker isn't listed. */
+  titleOf(ticker: string): Promise<string | null>;
+}

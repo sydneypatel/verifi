@@ -60,9 +60,9 @@ export function titleOf(result: CheckResult): { title: string; subtitle: string 
   return { title: result.entityName ?? 'Results', subtitle: null };
 }
 
-/** True when every claim is a prediction or opinion: hype with nothing to check. */
+/** True when every claim is a prediction, opinion or the poster's own position: hype with nothing to check. */
 export function allHype(result: CheckResult): boolean {
-  return result.claims.length > 0 && result.claims.every((c) => c.claim.type === 'prediction' || c.claim.type === 'opinion');
+  return result.claims.length > 0 && result.claims.every((c) => c.claim.type === 'prediction' || c.claim.type === 'opinion' || c.claim.type === 'personal');
 }
 
 /** A plain-language wrap-up of the post, built from the verdicts. No LLM. */
@@ -109,7 +109,7 @@ export function summarizePost(result: CheckResult): string[] {
 
   if (cant > 0) {
     const kinds = new Set(result.claims.filter((c) => c.verdict === 'cant_check').map((c) => c.claim.type));
-    if (kinds.has('prediction') || kinds.has('opinion')) {
+    if (kinds.has('prediction') || kinds.has('opinion') || kinds.has('personal')) {
       lines.push('Predictions and opinions in the post are hype, not facts: no filing can confirm them.');
     }
   }

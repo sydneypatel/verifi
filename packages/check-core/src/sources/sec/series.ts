@@ -26,6 +26,8 @@ export interface SeriesPeriod {
   accession: string;
   form: string;
   filed: string;
+  /** When the period was first reported. Later filings repeat it as a comparison. */
+  firstFiled?: string;
   /** A direct link to the document, when it is not the filing's folder (an earnings release exhibit). */
   url?: string;
 }
@@ -79,6 +81,7 @@ function periodsOf(facts: SecFact[]): SeriesPeriod[] {
       accession: last.accn,
       form: last.form,
       filed: last.filed,
+      firstFiled: first.filed,
     });
   }
   return periods;
@@ -110,26 +113,48 @@ function deriveFourthQuarters(quarters: SeriesPeriod[], years: SeriesPeriod[]): 
       accession: year.accession,
       form: year.form,
       filed: year.filed,
+      firstFiled: year.firstFiled,
     });
   }
   return derived;
+}
+
+export interface SeriesOptions {
+  /**
+   * When several concepts reach the newest period, use the one with the largest
+   * value there. For revenue: some companies (Vistra) tag only part of their
+   * sales as RevenueFromContractWithCustomer... and the total as Revenues, and
+   * a headline revenue claim is about the total.
+   */
+  preferLargest?: boolean;
+  /** The SEC unit to read. Dollars by default; per-share figures use "USD/shares". */
+  unit?: string;
+}
+
+/** The value a concept reports for its newest period, quarters first. */
+function newestValue(periods: SeriesPeriod[], newest: string): number {
+  const at = periods.filter((p) => p.end === newest).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'quarter' ? -1 : 1));
+  return at[0]?.value ?? -Infinity;
 }
 
 /**
  * Build the series for the first concept in the list that has the newest data.
  * Companies tag the same number under different names, and switch over time.
  */
-export function buildSeries(facts: SecCompanyFacts, concepts: string[]): Series | null {
+export function buildSeries(facts: SecCompanyFacts, concepts: string[], options: SeriesOptions = {}): Series | null {
   const gaap = facts.facts['us-gaap'] ?? {};
 
   let best: { concept: string; periods: SeriesPeriod[]; newest: string } | null = null;
   for (const concept of concepts) {
-    const usd = gaap[concept]?.units['USD'];
+    const usd = gaap[concept]?.units[options.unit ?? 'USD'];
     if (!usd?.length) continue;
     const periods = periodsOf(usd);
     if (periods.length === 0) continue;
     const newest = periods.reduce((max, p) => (p.end > max ? p.end : max), '');
     if (!best || newest > best.newest) best = { concept, periods, newest };
+    else if (options.preferLargest && newest === best.newest && newestValue(periods, newest) > newestValue(best.periods, newest)) {
+      best = { concept, periods, newest };
+    }
   }
   if (!best) return null;
 
@@ -141,6 +166,6 @@ export function buildSeries(facts: SecCompanyFacts, concepts: string[]): Series 
 }
 
 /** Find a period ending within about three weeks of the target date. */
-export function endingNear(periods: SeriesPeriod[], targetEnd: number): SeriesPeriod | undefined {
+export function endingNear<T extends { end: string }>(periods: T[], targetEnd: number): T | undefined {
   return periods.find((p) => Math.abs(toTime(p.end) - targetEnd) <= 20 * DAY);
 }

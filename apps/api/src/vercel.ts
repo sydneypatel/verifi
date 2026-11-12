@@ -91,7 +91,7 @@ export default async function handler(req: VercelRequest, res: ServerResponse): 
     const text = payload?.text;
     if (typeof text !== 'string') throw new InputError('Send JSON like {"text": "..."}');
     const device = cleanDeviceId(req.headers['x-verifi-device'] ?? req.headers['x-hypecheck-device']);
-    const { result, postHash } = await checker.check(text, { source: cleanSource(payload?.source), device });
+    const { result, postHash } = await checker.check(text, { source: cleanSource(payload?.source), device, postedAt: typeof payload?.postedAt === 'string' ? payload.postedAt : null });
     send(res, 200, { ...result, postHash });
   } catch (error) {
     if (error instanceof InputError) return send(res, 400, { error: error.message });

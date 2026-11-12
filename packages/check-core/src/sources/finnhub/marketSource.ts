@@ -1,4 +1,5 @@
-import { describeChange, formatPercentMagnitude, formatPrice, formatSignedPercent, formatTime, formatUsd } from '../../format';
+import { daysBetween, newYorkDate } from '../../dates';
+import { describeChange, formatDate, formatPercentMagnitude, formatPrice, formatSignedPercent, formatTime, formatUsd } from '../../format';
 import type { Claim, Evidence, EvidenceFigure, MarketEvidence, PriceWindow } from '../../types';
 import type { Evaluation, EvidenceSource } from '../types';
 import type { FinnhubClient } from './client';
@@ -7,12 +8,12 @@ import type { FinnhubClient } from './client';
 // latest price data. Unlike filings, prices change all day, so every reason
 // says when the price was read, and evidence is only cached for five minutes.
 
-// A post is usually older than the check, so price moves get wider bands than
-// filed figures. Tune these against real posts.
-export const PRICE_TIGHT_POINTS = 3;
-export const PRICE_TIGHT_RELATIVE = 0.2;
-export const PRICE_LOOSE_POINTS = 8;
-export const PRICE_LOOSE_RELATIVE = 0.4;
+// A price claim holds up only when it agrees with the data within 10% of the
+// claimed figure (with half a point of slack for rounding small moves). Up to
+// 25% off is "close, but". Tune these against real posts.
+export const PRICE_TOLERANCE = 0.1;
+export const PRICE_MIN_POINTS = 0.5;
+export const PRICE_LOOSE = 0.25;
 export const CAP_TIGHT = 0.1;
 export const CAP_LOOSE = 0.25;
 
@@ -34,88 +35,196 @@ const METRIC_FIELD: Partial<Record<PriceWindow, string>> = {
   year: '52WeekPriceReturnDaily',
 };
 
+/**
+ * How many days the post may be older than the price data and still be checked.
+ * "Up 12% today" written on Monday says nothing about Wednesday's move, and the
+ * five-day change shifts every session. Longer spans drift slowly.
+ */
+const MAX_LAG_DAYS: Record<PriceWindow | 'price' | 'high', number> = { day: 0, week: 0, price: 0, high: 1, month: 1, ytd: 3, year: 3 };
+
 const STALE_NOTE = ' Prices move all day, so the post may have been right when it was written.';
 
-const within = (claimed: number, actual: number, points: number, relative: number) =>
-  Math.abs(claimed - actual) <= Math.max(points, Math.abs(actual) * relative);
+/** Within the margin of the claimed figure. */
+const agrees = (claimed: number, actual: number, margin = PRICE_TOLERANCE) =>
+  Math.abs(claimed - actual) <= Math.max(Math.abs(claimed) * margin, PRICE_MIN_POINTS);
 
 function moveText(evidence: MarketEvidence, w: PriceWindow): string {
   return `${describeChange(evidence.returns[w]!)} ${WINDOW_WORDS[w]}`;
 }
 
+/** Spans in days that one of the data's windows covers. */
+function windowForDays(days: number): PriceWindow | null {
+  if (days === 1) return 'day';
+  if (days === 5 || days === 7) return 'week';
+  if (days >= 360 && days <= 366) return 'year';
+  return null;
+}
+
+/** Why a post's date rules out this comparison, or null if it doesn't. */
+function staleReason(claim: Claim, evidence: MarketEvidence, kind: PriceWindow | 'price' | 'high', what: string): string | null {
+  if (!claim.postedAt) return null;
+  const readDay = newYorkDate(new Date(evidence.readAt));
+  const lag = daysBetween(claim.postedAt, readDay);
+  // Negative: the latest price predates the post (a weekend), so it is the post's latest session too.
+  if (lag <= MAX_LAG_DAYS[kind]) return null;
+  return `The post is from ${formatDate(claim.postedAt)}, but the market data shows ${evidence.ticker} as of ${formatDate(readDay)}, so ${what} on the post's date can't be checked.`;
+}
+
+function claimedWords(claim: Claim, claimed: number): string {
+  const b = claim.bound === 'at_least' ? 'more than ' : claim.bound === 'at_most' ? 'less than ' : '';
+  return `${b}${formatPercentMagnitude(claimed)} ${claim.direction === 'down' ? 'drop' : 'gain'}`;
+}
+
+/** "Down 30% from its highs": compared with the 52-week high. */
+function evaluateFromHigh(claim: Claim, evidence: MarketEvidence): Evaluation {
+  if (claim.reference === 'high_all_time') {
+    return { verdict: 'cant_check', reason: "The market data only goes back 52 weeks, so a move from the all-time high can't be checked." };
+  }
+  const high = evidence.high52Week;
+  if (!high || evidence.price === null || claim.claimedPercent === null) {
+    return { verdict: 'cant_check', reason: `No 52-week high found for ${evidence.ticker}.` };
+  }
+  const stale = staleReason(claim, evidence, 'high', 'the distance from the high');
+  if (stale) return { verdict: 'cant_check', reason: stale };
+
+  const below = ((high.price - evidence.price) / high.price) * 100;
+  const when = high.date ? `, reached ${formatDate(high.date)}` : '';
+  const actualText = `${evidence.entityName} stock is ${formatPrice(evidence.price)}, ${formatPercentMagnitude(below)} below its 52-week high of ${formatPrice(high.price)}${when} (as of ${formatTime(evidence.readAt)}).`;
+  const claimed = claim.claimedPercent;
+
+  if (agrees(claimed, below)) return { verdict: 'holds_up', reason: actualText };
+  // "Its highs" with no span: an older all-time high could explain a bigger drop, never a smaller one.
+  if (claim.reference === 'high' && claimed > below) {
+    return {
+      verdict: 'cant_check',
+      reason: `${actualText} The post may mean an older high than the past 52 weeks, which the market data doesn't cover.`,
+    };
+  }
+  if (agrees(claimed, below, PRICE_LOOSE)) {
+    return { verdict: 'misleading', reason: `Close, but ${claimed > below ? 'overstated' : 'understated'}. ${actualText}${STALE_NOTE}` };
+  }
+  return { verdict: 'contradicted', reason: `${actualText} The post says ${formatPercentMagnitude(claimed)} below the high.${STALE_NOTE}` };
+}
+
+/** "Trading at $182": the share price itself. */
+function evaluatePrice(claim: Claim, evidence: MarketEvidence): Evaluation {
+  const claimed = claim.claimedAmount!;
+  if (evidence.price === null) return { verdict: 'cant_check', reason: `No current price found for ${evidence.ticker}.` };
+  const stale = staleReason(claim, evidence, 'price', 'the share price');
+  if (stale) return { verdict: 'cant_check', reason: stale };
+  const actualText = `${evidence.entityName} stock is ${formatPrice(evidence.price)} (as of ${formatTime(evidence.readAt)}).`;
+  const gap = Math.abs(claimed - evidence.price) / claimed;
+  if (gap <= PRICE_TOLERANCE) return { verdict: 'holds_up', reason: actualText };
+  if (gap <= PRICE_LOOSE) return { verdict: 'misleading', reason: `Close, but ${claimed > evidence.price ? 'overstated' : 'understated'}. ${actualText}${STALE_NOTE}` };
+  return { verdict: 'contradicted', reason: `${actualText} The post says ${formatPrice(claimed)}.${STALE_NOTE}` };
+}
+
+/** The window the claim names, from its word or its length in days, or why it can't be checked. */
+function claimWindow(claim: Claim, evidence: MarketEvidence, available: PriceWindow[]): { window: PriceWindow } | { reason: string } {
+  const all = available.map((w) => moveText(evidence, w)).join(', ');
+  const context = all ? ` For reference, ${evidence.entityName} stock is ${all} (as of ${formatTime(evidence.readAt)}).` : '';
+  if (claim.window) return { window: claim.window };
+  if (claim.windowDays !== null) {
+    if (claim.windowDays > 366) return { reason: `The market data only goes back 52 weeks, so a move over a longer span can't be checked.` };
+    const w = windowForDays(claim.windowDays);
+    if (w) return { window: w };
+    return { reason: `The market data has changes for today, 5 trading days, this month, this year and 52 weeks, not ${claim.windowDays} days.${context}` };
+  }
+  return { reason: `The post doesn't say over what period, so there is no change to compare.${context}` };
+}
+
 function evaluatePriceMove(claim: Claim, evidence: MarketEvidence): Evaluation {
-  const at = `as of ${formatTime(evidence.readAt)}`;
-  const available = WINDOWS.filter((w) => typeof evidence.returns[w] === 'number');
-  if (available.length === 0) return { verdict: 'cant_check', reason: `No recent price changes found for ${evidence.ticker}.` };
+  if (claim.session) {
+    const when = claim.session === 'pre_market' ? 'Pre-market' : 'After-hours';
+    return { verdict: 'cant_check', reason: `${when} prices aren't in the market data, which covers regular trading hours only.` };
+  }
+  if (claim.reference) return evaluateFromHigh(claim, evidence);
   if (claim.claimedPercent === null && claim.direction === null) {
+    if (claim.claimedAmount !== null) return evaluatePrice(claim, evidence);
     return { verdict: 'cant_check', reason: "The post doesn't say how the price moved, so there is nothing to compare." };
   }
-  if (claim.window && !available.includes(claim.window)) {
-    const early = claim.window === 'month' ? " Early in a month the month-to-date figure isn't reliable yet." : '';
-    return { verdict: 'cant_check', reason: `The market data doesn't include ${evidence.ticker}'s change ${WINDOW_WORDS[claim.window]}.${early}` };
-  }
 
+  const available = WINDOWS.filter((w) => typeof evidence.returns[w] === 'number');
+  if (available.length === 0) return { verdict: 'cant_check', reason: `No recent price changes found for ${evidence.ticker}.` };
+  const resolved = claimWindow(claim, evidence, available);
+  if ('reason' in resolved) return { verdict: 'cant_check', reason: resolved.reason };
+  const named = resolved.window;
+  if (!available.includes(named)) {
+    const early = named === 'month' ? " Early in a month the month-to-date figure isn't reliable yet." : '';
+    return { verdict: 'cant_check', reason: `The market data doesn't include ${evidence.ticker}'s change ${WINDOW_WORDS[named]}.${early}` };
+  }
+  const stale = staleReason(claim, evidence, named, `a move ${WINDOW_WORDS[named]}`);
+  if (stale) return { verdict: 'cant_check', reason: stale };
+
+  const at = `as of ${formatTime(evidence.readAt)}`;
   const sign = claim.direction === 'down' ? -1 : 1;
-  const primary = claim.window ?? available[0]!;
   const actualText = (w: PriceWindow) => `${evidence.entityName} stock is ${moveText(evidence, w)} (${at}).`;
+  const actual = evidence.returns[named]!;
 
   // "The stock is up" with no number: only the direction can be checked.
   if (claim.claimedPercent === null) {
-    const actual = evidence.returns[primary]!;
     const same = Math.sign(actual) === sign || actual === 0;
-    return { verdict: same ? 'holds_up' : 'contradicted', reason: `${actualText(primary)}${same ? '' : STALE_NOTE}` };
+    return { verdict: same ? 'holds_up' : 'contradicted', reason: `${actualText(named)}${same ? '' : STALE_NOTE}` };
   }
 
   const claimed = sign * claim.claimedPercent;
-  const claimedText = `${claim.bound === 'at_least' ? 'more than ' : claim.bound === 'at_most' ? 'less than ' : ''}${formatPercentMagnitude(claimed)} ${claim.direction === 'down' ? 'drop' : 'gain'}`;
+  const claimedText = claimedWords(claim, claim.claimedPercent);
+  const margin = (c: number) => Math.max(Math.abs(c) * PRICE_TOLERANCE, PRICE_MIN_POINTS);
   const tight = (w: PriceWindow) => {
-    const actual = evidence.returns[w]!;
-    if (claim.bound === 'at_least') return sign * actual >= claim.claimedPercent! - Math.max(PRICE_TIGHT_POINTS, claim.claimedPercent! * PRICE_TIGHT_RELATIVE);
-    if (claim.bound === 'at_most') return sign * actual <= claim.claimedPercent! + PRICE_TIGHT_POINTS && Math.sign(actual) !== -sign;
-    return within(claimed, actual, PRICE_TIGHT_POINTS, PRICE_TIGHT_RELATIVE);
-  };
-  const loose = (w: PriceWindow) => {
-    const actual = evidence.returns[w]!;
-    return Math.sign(actual) === sign && within(claimed, actual, PRICE_LOOSE_POINTS, PRICE_LOOSE_RELATIVE);
+    const r = evidence.returns[w]!;
+    if (claim.bound === 'at_least') return sign * r >= claim.claimedPercent! - margin(claimed);
+    if (claim.bound === 'at_most') return sign * r <= claim.claimedPercent! + margin(claimed) && Math.sign(r) !== -sign;
+    return agrees(claimed, r);
   };
 
-  if (claim.window) {
-    if (tight(primary)) return { verdict: 'holds_up', reason: actualText(primary) };
-    const other = available.find((w) => w !== primary && tight(w));
-    if (other) {
-      return {
-        verdict: 'misleading',
-        reason: `A ${claimedText} matches the change ${WINDOW_WORDS[other]}, not ${WINDOW_WORDS[primary]}. ${actualText(primary)}`,
-      };
-    }
-    if (loose(primary)) {
-      const how = Math.abs(claimed) > Math.abs(evidence.returns[primary]!) ? 'overstated' : 'understated';
-      return { verdict: 'misleading', reason: `Close, but ${how}. ${actualText(primary)}${STALE_NOTE}` };
-    }
-    return { verdict: 'contradicted', reason: `${actualText(primary)} The post says a ${claimedText} ${WINDOW_WORDS[primary]}.${STALE_NOTE}` };
+  if (tight(named)) return { verdict: 'holds_up', reason: actualText(named) };
+  const other = available.find((w) => w !== named && tight(w));
+  if (other) {
+    return {
+      verdict: 'misleading',
+      reason: `A ${claimedText} matches the change ${WINDOW_WORDS[other]}, not ${WINDOW_WORDS[named]}. ${actualText(named)}`,
+    };
   }
+  if (Math.sign(actual) === sign && agrees(claimed, actual, PRICE_LOOSE)) {
+    const how = Math.abs(claimed) > Math.abs(actual) ? 'overstated' : 'understated';
+    return { verdict: 'misleading', reason: `Close, but ${how}. ${actualText(named)}${STALE_NOTE}` };
+  }
+  return { verdict: 'contradicted', reason: `${actualText(named)} The post says a ${claimedText} ${WINDOW_WORDS[named]}.${STALE_NOTE}` };
+}
 
-  // No time span in the post: any recent span that matches counts, but say which.
-  const hit = available.find(tight);
-  if (hit) {
-    return { verdict: 'holds_up', reason: `${actualText(hit)} The post doesn't say over what period, and this is the span that matches.` };
-  }
-  const near = available.find(loose);
-  if (near) {
-    const how = Math.abs(claimed) > Math.abs(evidence.returns[near]!) ? 'overstated' : 'understated';
-    return { verdict: 'misleading', reason: `Close, but ${how}. ${actualText(near)}${STALE_NOTE}` };
-  }
-  const all = available.map((w) => moveText(evidence, w)).join(', ');
-  return {
-    verdict: 'contradicted',
-    reason: `No recent period shows a ${claimedText}. ${evidence.entityName} stock is ${all} (${at}).${STALE_NOTE}`,
-  };
+/** "$500B wiped out today": the move over the window times the market value, not the value itself. */
+function evaluateCapChange(claim: Claim, evidence: MarketEvidence): Evaluation {
+  const claimed = claim.claimedAmount!;
+  if (evidence.marketCap === null) return { verdict: 'cant_check', reason: `No market value found for ${evidence.ticker}.` };
+  const available = WINDOWS.filter((w) => typeof evidence.returns[w] === 'number');
+  const resolved = claimWindow(claim, evidence, available);
+  if ('reason' in resolved) return { verdict: 'cant_check', reason: resolved.reason.replace('no change to compare', 'no change in value to compare') };
+  const named = resolved.window;
+  const r = evidence.returns[named];
+  if (typeof r !== 'number') return { verdict: 'cant_check', reason: `The market data doesn't include ${evidence.ticker}'s change ${WINDOW_WORDS[named]}.` };
+  const stale = staleReason(claim, evidence, named, `the change in value ${WINDOW_WORDS[named]}`);
+  if (stale) return { verdict: 'cant_check', reason: stale };
+
+  const before = evidence.marketCap / (1 + r / 100);
+  const change = evidence.marketCap - before;
+  const verb = change < 0 ? 'lost' : 'gained';
+  const actualText = `${evidence.entityName} ${verb} about ${formatUsd(Math.abs(change))} in market value ${WINDOW_WORDS[named]} (${describeChange(r)} on a value of about ${formatUsd(evidence.marketCap)}, as of ${formatTime(evidence.readAt)}).`;
+  const claimedText = `${formatUsd(claimed)} ${claim.direction === 'down' ? 'wiped out' : 'added'}`;
+
+  if ((claim.direction === 'down') !== change < 0) return { verdict: 'contradicted', reason: `${actualText} The post says ${claimedText}.${STALE_NOTE}` };
+  const gap = Math.abs(claimed - Math.abs(change)) / claimed;
+  if (gap <= CAP_TIGHT) return { verdict: 'holds_up', reason: actualText };
+  if (gap <= CAP_LOOSE) return { verdict: 'misleading', reason: `Close, but ${claimed > Math.abs(change) ? 'overstated' : 'understated'}. ${actualText}${STALE_NOTE}` };
+  return { verdict: 'contradicted', reason: `${actualText} The post says ${claimedText}.${STALE_NOTE}` };
 }
 
 function evaluateMarketCap(claim: Claim, evidence: MarketEvidence): Evaluation {
   const claimed = claim.claimedAmount;
   if (claimed === null) return { verdict: 'cant_check', reason: "The post doesn't give a market value to compare." };
+  if (claim.direction) return evaluateCapChange(claim, evidence);
   if (evidence.marketCap === null) return { verdict: 'cant_check', reason: `No market value found for ${evidence.ticker}.` };
+  const stale = staleReason(claim, evidence, 'month', 'the market value');
+  if (stale) return { verdict: 'cant_check', reason: stale };
 
   const actual = evidence.marketCap;
   const actualText = `${evidence.entityName} is worth about ${formatUsd(actual)} (market value, ${'as of ' + formatTime(evidence.readAt)}).`;
@@ -128,7 +237,7 @@ function evaluateMarketCap(claim: Claim, evidence: MarketEvidence): Evaluation {
       : { verdict: 'contradicted', reason: `${actualText} The post says ${b}${formatUsd(claimed)}.` };
   }
 
-  const gap = Math.abs(claimed - actual) / actual;
+  const gap = Math.abs(claimed - actual) / claimed;
   if (gap <= CAP_TIGHT) return { verdict: 'holds_up', reason: actualText };
   if (gap <= CAP_LOOSE) {
     return { verdict: 'misleading', reason: `Close, but ${claimed > actual ? 'overstated' : 'understated'}. ${actualText}` };
@@ -148,6 +257,7 @@ function figuresFor(e: MarketEvidence): EvidenceFigure[] {
     const r = e.returns[w];
     if (typeof r === 'number') rows.push({ label: `Change ${WINDOW_WORDS[w]}`, value: formatSignedPercent(r) });
   }
+  if (e.high52Week) rows.push({ label: '52-week high', value: formatPrice(e.high52Week.price) });
   if (e.marketCap !== null) rows.push({ label: 'Market value', value: formatUsd(e.marketCap) });
   return rows;
 }
@@ -164,9 +274,9 @@ export function createFinnhubMarketSource({ finnhub, now = () => new Date() }: {
     id: 'finnhub-market',
     ttlMs: 5 * 60 * 1000,
 
-    supports: (claim) =>
-      (claim.type === 'price_move' && (claim.claimedPercent !== null || claim.direction !== null)) ||
-      (claim.type === 'market_cap' && claim.claimedAmount !== null),
+    // Every price and market-value claim comes here, so each gets a specific
+    // answer (a verdict, or why it can't be checked) instead of "not connected".
+    supports: (claim) => claim.type === 'price_move' || claim.type === 'market_cap',
 
     cacheKey: (claim) => `finnhub-market:${claim.ticker ?? ''}`,
 
@@ -197,6 +307,8 @@ export function createFinnhubMarketSource({ finnhub, now = () => new Date() }: {
       if (dayOfMonthInNewYork(readAt) <= 7) delete returns.month;
 
       const capMillions = num(profile?.marketCapitalization) ?? num(m['marketCapitalization']);
+      const highPrice = num(m['52WeekHigh']);
+      const highDate = typeof m['52WeekHighDate'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(m['52WeekHighDate']) ? m['52WeekHighDate'] : null;
 
       const evidence: MarketEvidence = {
         kind: 'market',
@@ -208,6 +320,7 @@ export function createFinnhubMarketSource({ finnhub, now = () => new Date() }: {
         price: quote?.c ? quote.c : null,
         returns,
         marketCap: capMillions === null ? null : capMillions * 1e6,
+        high52Week: highPrice !== null && highPrice > 0 ? { price: highPrice, date: highDate } : null,
         figures: [],
         citation: {
           label: `Finnhub market data, ${formatTime(readAt)}`,

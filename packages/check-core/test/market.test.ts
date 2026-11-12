@@ -40,10 +40,12 @@ describe('price moves', () => {
     expect(r.reason).toContain('down 14.5% so far this year');
   });
 
-  it('accepts any window when the post names none, and says which one matched', () => {
+  it("can't check a move when the post names no period (no searching for a span that fits)", () => {
     const r = evaluateMarketClaim(claim({ claimedPercent: 22, direction: 'down' }), market);
-    expect(r.verdict).toBe('holds_up');
-    expect(r.reason).toContain('over the past 52 weeks');
+    expect(r.verdict).toBe('cant_check');
+    expect(r.reason).toContain("doesn't say over what period");
+    // The actual moves are still shown for reference.
+    expect(r.reason).toContain('down 22.1% over the past 52 weeks');
   });
 
   it('checks a floor ("up over 10% this week")', () => {
@@ -159,9 +161,10 @@ describe('extracting the new claim types (rule-based)', () => {
     ]);
   });
 
-  it('does not treat "revenue beat estimates" as an EPS claim', async () => {
+  it('reads "revenue beat estimates" as a revenue beat, not an EPS claim', async () => {
     const claims = await extract('$AMD revenue beat estimates.');
-    expect(claims.filter((c) => c.type === 'earnings_result')).toEqual([]);
+    expect(claims).toHaveLength(1);
+    expect(claims[0]).toMatchObject({ type: 'earnings_result', metric: 'revenue', vsEstimate: 'beat', quote: 'revenue beat estimates' });
   });
 
   it('normalizes the new fields from model output', () => {
@@ -169,7 +172,8 @@ describe('extracting the new claim types (rule-based)', () => {
       { quote: 'up 40% this week', type: 'price_move', window: 'WEEK', direction: 'up', claimedPercent: 40, claimedAmount: 5 },
       { quote: 'beat', type: 'earnings_result', vsEstimate: 'beat', window: 'day', claimedAmount: 1.2 },
     ]);
-    expect(a).toMatchObject({ window: 'week', vsEstimate: null, claimedAmount: null });
+    // On a price move, claimedAmount is a share price the post states.
+    expect(a).toMatchObject({ window: 'week', vsEstimate: null, claimedAmount: 5 });
     expect(b).toMatchObject({ window: null, vsEstimate: 'beat', claimedAmount: 1.2 });
   });
 });

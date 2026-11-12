@@ -110,8 +110,7 @@ export class SecClient {
     return this.getRaw(url);
   }
 
-  /** Ticker -> SEC company id (CIK). The full ticker list is fetched once per process. */
-  async lookupTicker(ticker: string): Promise<{ cik: number; title: string } | null> {
+  private loadTickers(): Promise<Map<string, TickerRow>> {
     if (!this.tickers) {
       this.tickers = this.getJson('https://www.sec.gov/files/company_tickers.json').then((data) => {
         const map = new Map<string, TickerRow>();
@@ -123,10 +122,56 @@ export class SecClient {
       // Do not cache a failed download.
       this.tickers.catch(() => {
         this.tickers = null;
+        this.names = null;
       });
     }
-    const row = (await this.tickers).get(ticker.toUpperCase());
+    return this.tickers;
+  }
+
+  /** Ticker -> SEC company id (CIK). The full ticker list is fetched once per process. */
+  async lookupTicker(ticker: string): Promise<{ cik: number; title: string } | null> {
+    const row = (await this.loadTickers()).get(ticker.toUpperCase());
     return row ? { cik: row.cik_str, title: row.title } : null;
+  }
+
+  private names: Promise<Map<string, TickerRow[]>> | null = null;
+
+  /**
+   * Company name -> ticker, from the same SEC list: "CoreWeave" -> CRWV,
+   * "BrightView" -> BV, "Nebius" -> NBIS. The name must be the company's
+   * listed name without "Inc.", "Holdings" and the like, or its first words.
+   * Null when no company or more than one company fits.
+   */
+  async findByName(name: string): Promise<{ ticker: string; title: string } | null> {
+    const key = companyKey(name);
+    if (key.length < 3) return null;
+    if (!this.names) {
+      this.names = this.loadTickers().then((tickers) => {
+        const map = new Map<string, TickerRow[]>();
+        for (const row of tickers.values()) {
+          const k = companyKey(row.title);
+          if (k) map.set(k, [...(map.get(k) ?? []), row]);
+        }
+        return map;
+      });
+    }
+    const names = await this.names;
+    const pick = (rows: TickerRow[]) => {
+      // Share classes (GOOGL, GOOG) are one company. Different companies are a guess.
+      if (new Set(rows.map((r) => r.cik_str)).size !== 1) return null;
+      // The SEC list puts a company's main ticker first.
+      return { ticker: rows[0]!.ticker.toUpperCase(), title: rows[0]!.title };
+    };
+    const exact = names.get(key);
+    if (exact) return pick(exact);
+    if (key.length < 4) return null;
+    const prefixed = [...names.entries()].filter(([k]) => k.startsWith(`${key} `)).flatMap(([, rows]) => rows);
+    return prefixed.length ? pick(prefixed) : null;
+  }
+
+  /** The company name the SEC lists for a ticker. */
+  async titleOf(ticker: string): Promise<string | null> {
+    return (await this.lookupTicker(ticker))?.title ?? null;
   }
 
   /** Every structured number the company has reported. Null if the SEC has none. */
@@ -143,6 +188,33 @@ export class SecClient {
     if (this.facts.size > 50) this.facts.delete(this.facts.keys().next().value!);
     return data;
   }
+}
+
+// Words that don't tell companies apart: "BrightView Holdings, Inc." is "brightview".
+const NAME_NOISE = new Set([
+  'the', 'inc', 'incorporated', 'corp', 'corporation', 'co', 'company', 'cos', 'ltd', 'limited', 'plc', 'llc', 'lp', 'group',
+  'holdings', 'holding', 'nv', 'sa', 'ag', 'se', 'spa', 'ab', 'asa', 'class', 'a', 'b', 'c', 'common', 'stock', 'shares', 'ordinary', 'ads', 'adr', 'de', 'new',
+]);
+
+/** A company name reduced to the words that identify it. */
+export function companyKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/\/[a-z]{2}\/?/g, ' ') // "/DE/" state suffixes
+    .replace(/[.'’]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter((w) => w && !NAME_NOISE.has(w))
+    .join(' ');
+}
+
+/** "NVIDIA" names "NVIDIA CORP"; "SoftBank" does not. One must be the other's leading words. */
+export function namesMatch(a: string, b: string): boolean {
+  const x = companyKey(a);
+  const y = companyKey(b);
+  if (!x || !y) return false;
+  return x === y || x.startsWith(`${y} `) || y.startsWith(`${x} `) || x.replace(/ /g, '') === y.replace(/ /g, '');
 }
 
 /** Link to the filing's folder on sec.gov. */

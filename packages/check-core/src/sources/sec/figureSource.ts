@@ -1,16 +1,18 @@
 import { formatDate, formatUsd } from '../../format';
-import type { Citation, Claim, Evidence, EvidenceFigure, FigureEvidence, ReportedPeriod } from '../../types';
+import type { Citation, Claim, Evidence, EvidenceFigure, FigureEvidence, FigureMetric, ReportedPeriod } from '../../types';
 import type { Evaluation, EvidenceSource } from '../types';
 import { SecClient, filingUrl } from './client';
 import { newestFiling, withRelease, type EarningsReleases } from './releases';
 import { REVENUE_CONCEPTS } from './revenueFacts';
-import { buildSeries, toTime, type SeriesPeriod } from './series';
+import { isQuarter, isYear, latestNamedQuarter, notFiledYet, onFileBy, periodWords, quarterAfter, toReported, yearAfter } from './periods';
+import { buildSeries } from './series';
 
 // Checks dollar figures a post says a company reported: "Q2 revenue of $11.5B",
 // "a $42M net loss". Uses the same SEC data as the revenue growth source.
 
-const CONCEPTS: Record<FigureEvidence['metric'], string[]> = {
+const CONCEPTS: Record<FigureMetric, string[]> = {
   revenue: REVENUE_CONCEPTS,
+  operating_income: ['OperatingIncomeLoss'],
   net_income: ['NetIncomeLoss', 'ProfitLoss'],
 };
 
@@ -21,21 +23,16 @@ export const LOOSE = 0.15;
 
 const within = (claimed: number, actual: number, relative: number) => Math.abs(claimed - actual) <= Math.abs(actual) * relative;
 
-function describe(metric: FigureEvidence['metric'], value: number): string {
-  if (metric === 'revenue') return `revenue of ${formatUsd(value)}`;
-  return value < 0 ? `a net loss of ${formatUsd(-value)}` : `net income of ${formatUsd(value)}`;
-}
+const METRIC_WORDS: Record<FigureMetric, { profit: string; loss: string }> = {
+  revenue: { profit: 'revenue', loss: 'revenue' },
+  operating_income: { profit: 'operating income', loss: 'an operating loss' },
+  net_income: { profit: 'net income', loss: 'a net loss' },
+};
 
-function periodWords(p: ReportedPeriod): string {
-  if (p.kind === 'year') return `the fiscal year ended ${formatDate(p.end)}`;
-  const label = p.fiscalQuarter && p.fiscalYear ? ` (fiscal Q${p.fiscalQuarter} ${p.fiscalYear})` : '';
-  return `the quarter ended ${formatDate(p.end)}${label}`;
-}
-
-/** The calendar quarter a period mostly falls in, for posts that use calendar labels. */
-function calendarOf(p: ReportedPeriod): { year: number; quarter: number } {
-  const middle = new Date((toTime(p.start) + toTime(p.end)) / 2);
-  return { year: middle.getUTCFullYear(), quarter: Math.floor(middle.getUTCMonth() / 3) + 1 };
+function describe(metric: FigureMetric, value: number, bound = ''): string {
+  if (metric === 'revenue') return `revenue of ${bound}${formatUsd(value)}`;
+  const words = METRIC_WORDS[metric];
+  return value < 0 ? `${words.loss} of ${bound}${formatUsd(-value)}` : `${words.profit} of ${bound}${formatUsd(value)}`;
 }
 
 export function filingLabel(form: string, filed: string): string {
@@ -46,19 +43,6 @@ function citationFor(evidence: FigureEvidence, p: ReportedPeriod): Citation {
   return {
     label: filingLabel(p.filing.form, p.filing.filed),
     url: p.filing.url ?? filingUrl(evidence.cik, p.filing.accession),
-  };
-}
-
-function toReported(p: SeriesPeriod): ReportedPeriod {
-  return {
-    kind: p.kind,
-    start: p.start,
-    end: p.end,
-    value: p.value,
-    fiscalYear: p.fiscalYear,
-    fiscalQuarter: p.fiscalQuarter,
-    derived: p.derived,
-    filing: { accession: p.accession, form: p.form, filed: p.filed, ...(p.url ? { url: p.url } : {}) },
   };
 }
 
@@ -76,31 +60,34 @@ function figuresFor(quarters: ReportedPeriod[], years: ReportedPeriod[]): Eviden
  * Which reported periods could the claim be about?
  *  - targets: the periods the post points at. Matching one means the claim holds up.
  *  - alternates: periods a reader would not assume. Matching one means the claim misleads.
+ *  - missing / notFiled: why there is nothing to compare.
+ * With a post date, "the latest quarter" is the latest one reported by that day.
  */
-function resolvePeriods(claim: Claim, evidence: FigureEvidence): { targets: ReportedPeriod[]; alternates: ReportedPeriod[]; missing?: string } {
-  const latestQuarter = evidence.quarters[0];
-  const latestYear = evidence.years[0];
+function resolvePeriods(
+  claim: Claim,
+  evidence: FigureEvidence,
+): { targets: ReportedPeriod[]; alternates: ReportedPeriod[]; missing?: string; notFiled?: string } {
+  const quarters = onFileBy(evidence.quarters, claim.postedAt);
+  const years = onFileBy(evidence.years, claim.postedAt);
+  const latestQuarter = quarters[0];
+  const latestYear = years[0];
   const some = (...periods: Array<ReportedPeriod | undefined>) => periods.filter((p): p is ReportedPeriod => Boolean(p));
 
   const granularity = claim.fiscalQuarter ? 'quarter' : claim.period ?? (claim.fiscalYear ? 'year' : null);
 
   if (granularity === 'quarter') {
     if (claim.fiscalQuarter && claim.fiscalYear) {
-      // "Q2 2026" may be the company's fiscal label or the calendar quarter. Accept either.
-      const targets = evidence.quarters.filter((q) => {
-        const calendar = calendarOf(q);
-        return (
-          (q.fiscalYear === claim.fiscalYear && q.fiscalQuarter === claim.fiscalQuarter) ||
-          (calendar.year === claim.fiscalYear && calendar.quarter === claim.fiscalQuarter)
-        );
-      });
-      if (targets.length === 0) return { targets, alternates: [], missing: `Q${claim.fiscalQuarter} ${claim.fiscalYear}` };
+      const targets = evidence.quarters.filter((q) => isQuarter(q, claim.fiscalYear!, claim.fiscalQuarter!));
+      const named = `Q${claim.fiscalQuarter} ${claim.fiscalYear}`;
+      if (targets.length === 0) {
+        return quarterAfter(evidence.quarters[0], claim.fiscalYear, claim.fiscalQuarter)
+          ? { targets, alternates: [], notFiled: named }
+          : { targets, alternates: [], missing: named };
+      }
       return { targets, alternates: some(latestYear) };
     }
     if (claim.fiscalQuarter) {
-      // "Q2 revenue" with no year: the most recent quarter with that label,
-      // by the company's fiscal calendar or the calendar year.
-      const named = evidence.quarters.find((q) => q.fiscalQuarter === claim.fiscalQuarter || calendarOf(q).quarter === claim.fiscalQuarter);
+      const named = latestNamedQuarter(quarters, claim.fiscalQuarter);
       if (named) return { targets: some(named), alternates: some(latestYear) };
     }
     return { targets: some(latestQuarter), alternates: some(latestYear) };
@@ -108,8 +95,13 @@ function resolvePeriods(claim: Claim, evidence: FigureEvidence): { targets: Repo
 
   if (granularity === 'year') {
     if (claim.fiscalYear) {
-      const targets = evidence.years.filter((y) => y.fiscalYear === claim.fiscalYear || Number(y.end.slice(0, 4)) === claim.fiscalYear);
-      if (targets.length === 0) return { targets, alternates: [], missing: `fiscal year ${claim.fiscalYear}` };
+      const targets = evidence.years.filter((y) => isYear(y, claim.fiscalYear!));
+      const named = `fiscal year ${claim.fiscalYear}`;
+      if (targets.length === 0) {
+        return yearAfter(evidence.years[0], claim.fiscalYear)
+          ? { targets, alternates: [], notFiled: named }
+          : { targets, alternates: [], missing: named };
+      }
       return { targets, alternates: some(latestQuarter) };
     }
     return { targets: some(latestYear), alternates: some(latestQuarter) };
@@ -124,7 +116,8 @@ export function evaluateFigureClaim(claim: Claim, evidence: FigureEvidence): Eva
   const claimed = claim.claimedAmount;
   if (claimed === null) return { verdict: 'cant_check', reason: "The post doesn't give a dollar amount to compare." };
 
-  const { targets, alternates, missing } = resolvePeriods(claim, evidence);
+  const { targets, alternates, missing, notFiled } = resolvePeriods(claim, evidence);
+  if (notFiled) return { verdict: 'cant_check', reason: notFiledYet(notFiled, evidence.quarters[0] ?? evidence.years[0], evidence.ticker) };
   if (targets.length === 0) {
     const newest = evidence.quarters[0] ?? evidence.years[0];
     const tail = newest ? ` The most recent period on file is ${periodWords(newest)}.` : '';
@@ -137,12 +130,7 @@ export function evaluateFigureClaim(claim: Claim, evidence: FigureEvidence): Eva
   const reported = (p: ReportedPeriod) => `${describe(evidence.metric, p.value)} for ${periodWords(p)}`;
   const calculated = (p: ReportedPeriod) => (p.derived ? ' That quarter is calculated as the full year minus the first three quarters.' : '');
   const b = claim.bound === 'at_least' ? 'more than ' : claim.bound === 'at_most' ? 'less than ' : '';
-  const claimedText =
-    evidence.metric === 'revenue'
-      ? `revenue of ${b}${formatUsd(claimed)}`
-      : claimed < 0
-        ? `a net loss of ${b}${formatUsd(-claimed)}`
-        : `net income of ${b}${formatUsd(claimed)}`;
+  const claimedText = describe(evidence.metric, claimed, b);
 
   // "Over $2 billion": a floor or ceiling. Compare magnitudes of the same sign.
   if (claim.bound) {
@@ -191,13 +179,15 @@ export interface FigureSourceOptions {
 }
 
 export function createSecFigureSource({ sec, releases }: FigureSourceOptions): EvidenceSource {
-  const metricOf = (claim: Claim) => (claim.metric === 'revenue' || claim.metric === 'net_income' ? claim.metric : null);
+  const metricOf = (claim: Claim): FigureMetric | null =>
+    claim.metric === 'revenue' || claim.metric === 'net_income' || claim.metric === 'operating_income' ? claim.metric : null;
 
   return {
     id: 'sec-figure',
     ttlMs: 6 * 60 * 60 * 1000,
 
-    supports: (claim) => claim.type === 'financial_figure' && metricOf(claim) !== null && claim.claimedAmount !== null,
+    // A business line ("Azure revenue") is never checked against the company total.
+    supports: (claim) => claim.type === 'financial_figure' && !claim.segment && metricOf(claim) !== null && claim.claimedAmount !== null,
 
     cacheKey: (claim) => `sec-figure:${claim.ticker ?? ''}:${claim.metric ?? ''}`,
 
@@ -208,7 +198,7 @@ export function createSecFigureSource({ sec, releases }: FigureSourceOptions): E
       if (!company) return null;
       const facts = await sec.getCompanyFacts(company.cik);
       if (!facts) return null;
-      let series = buildSeries(facts, CONCEPTS[metric]);
+      let series = buildSeries(facts, CONCEPTS[metric], { preferLargest: metric === 'revenue' });
       if (!series) return null;
       if (releases) series = withRelease(series, await releases.latest(company.cik, newestFiling(series)), metric);
 

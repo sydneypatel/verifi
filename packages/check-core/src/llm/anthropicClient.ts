@@ -17,6 +17,16 @@ interface MessagesResponse {
   error?: { message?: string };
 }
 
+/**
+ * Re-running a check should give the same answer, so sampling is pinned to
+ * temperature 0 and the default model is a dated snapshot, not an alias.
+ * Models from the 5 family reject sampling parameters (a 400), so they are
+ * sent only to the 4.x and older models that take them.
+ */
+export function acceptsTemperature(model: string): boolean {
+  return /^claude-(?:3|(?:haiku|sonnet|opus)-4)\b/.test(model);
+}
+
 export const nullable = (schema: Record<string, unknown>) => ({ anyOf: [schema, { type: 'null' }] });
 
 /** One request, one JSON object back that matches `schema`. Throws on any failure. */
@@ -42,6 +52,7 @@ export async function callStructured(
     body: JSON.stringify({
       model: options.model || DEFAULT_MODEL,
       max_tokens: request.maxTokens,
+      ...(acceptsTemperature(options.model || DEFAULT_MODEL) ? { temperature: 0 } : {}),
       system: request.system,
       messages: [{ role: 'user', content: request.user }],
       output_config: { format: { type: 'json_schema', schema: request.schema } },

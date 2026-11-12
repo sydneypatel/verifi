@@ -126,9 +126,10 @@ A screenshot gets the post's text without scraping any platform: the person brin
 
 ## Known limits
 
-- **Segment figures.** "Revenue up 300%" that is true of one business segment shows as
-  Contradicted, not Misleading. The SEC's structured API leaves out segment breakdowns;
-  catching this means reading the filing itself.
+- **Segment figures.** Claims about one business line ("Azure grew 40%", "AI Cloud revenue",
+  "ad revenue", "data center") are flagged with a `segment` and come back as "can't be
+  checked": the SEC's structured API leaves out segment breakdowns, and a company total is
+  never used as evidence for a segment. Checking them means reading the filing itself.
 - **Fresh earnings.** Structured data arrives with the 10-Q or 10-K, which can trail the
   earnings press release. The release fills the gap when `ANTHROPIC_API_KEY` is set and its
   figures verify; otherwise the "latest quarter" is the previous one.
@@ -139,9 +140,14 @@ A screenshot gets the post's text without scraping any platform: the person brin
 - **Other dollar figures.** Only revenue and net income are checked as dollar figures. Cash,
   debt and spending come back as "can't be checked". Earnings per share and market value are
   checked through Finnhub when it is connected.
-- **Old posts and prices.** A price claim is compared with the price at the time of the check.
-  A post that was right last week can show as Contradicted today; the reason says when the
-  price was read.
+- **Old posts and prices.** "Today" and "this week" mean the post's day (`postedAt`, or the
+  date in a copied X author block). Finnhub's free tier has no price history, so a move
+  "today" or "this week" is checked only when the post is from the same trading day as the
+  price data (a day or three of slack for month, year-to-date and 52-week spans); otherwise
+  it comes back as "can't be checked". Pre-market and after-hours moves, spans other than
+  1 day, 5 days, month, YTD and 52 weeks, and moves from an all-time high are not checked.
+- **EPS growth.** "EPS up 40% YoY" is kept apart from a beat and comes back as "can't be
+  checked"; only beats, misses and per-share figures are checked against Finnhub.
 - **Short interest.** Still not checked: Finnhub's short-interest data is not on the free tier.
 - **Non-GAAP numbers.** Posts often quote "adjusted" profit. Filings are compared on the
   standard (GAAP) figure, so an adjusted number can show as Contradicted.

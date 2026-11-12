@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { checkPost } from '../src/pipeline';
+import { EMPTY_CLAIM } from '../src/llm/types';
 import type { Claim, ExtractedClaim } from '../src/types';
 
-const base: ExtractedClaim = { quote: '', type: 'financial_figure', ticker: null, company: null, claimedPercent: null, direction: null, period: null, metric: 'revenue', claimedAmount: null, fiscalYear: null, fiscalQuarter: null, bound: null, vsEstimate: null, window: null };
+const base: ExtractedClaim = { ...EMPTY_CLAIM, quote: '', type: 'financial_figure', metric: 'revenue' };
 const c = (o: Partial<ExtractedClaim>): ExtractedClaim => ({ ...base, ...o });
 
 // Fake SEC source: FY2025 MSFT = 281.7B, latest (FY2026) = 331.8B.

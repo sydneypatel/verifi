@@ -29,7 +29,10 @@ import { createSupabaseStore, hashPost, type CheckSource, type CheckStore } from
 // from the old logic are recomputed instead of reused.
 // 2: 8-K earnings releases, Finnhub earnings and market data, three new claim types.
 // 3: fiscal labels for EPS quarters; month-to-date left out early in a month.
-export const RESULT_VERSION = 4;
+// 5: post dates, segment claims, named growth bases and quarters, "not filed yet", total revenue,
+//    10% price tolerance, 52-week highs, EPS-only beats, operating income, market-value changes,
+//    personal gains, ticker lookup by name, duplicate removal, temperature 0.
+export const RESULT_VERSION = 5;
 
 // A saved result is reused for the same post for this long (matches the SEC evidence cache).
 const REUSE_FOR_MS = 6 * 60 * 60 * 1000;
@@ -48,6 +51,8 @@ export interface CheckerOptions {
 
 export interface CheckMeta {
   source?: CheckSource;
+  /** When the post was written ("Nov 9", "2d ago", "2026-11-09"). "Today" in the post means that day. */
+  postedAt?: string | null;
   /** Random id the web app keeps in the browser, used to count distinct devices. */
   device?: string | null;
 }
@@ -105,7 +110,8 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
   const sources: EvidenceSource[] = [createSecRevenueSource({ sec, releases }), createSecFigureSource({ sec, releases })];
   if (finnhub) sources.push(createFinnhubEarningsSource({ finnhub }), createFinnhubMarketSource({ finnhub }));
 
-  const deps: CheckDeps = { extractor, sources, cache: new MemoryCache() };
+  // The SEC ticker list also finds tickers for companies a post names without one.
+  const deps: CheckDeps = { extractor, sources, cache: new MemoryCache(), directory: sec };
 
   // Screenshots are read by the same model, with vision. Off without a key and in demo mode.
   const screenshots =
@@ -134,9 +140,12 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
   const store: CheckStore | null = fixtures ? null : createSupabaseStore(env);
 
   async function check(text: string, meta: CheckMeta = {}): Promise<CheckOutcome> {
-    if (!store) return { result: await checkPost(text, deps), postHash: null };
+    const options = { postedAt: meta.postedAt ?? null };
+    if (!store) return { result: await checkPost(text, deps, options), postHash: null };
 
-    const hash = hashPost(text);
+    // The same words posted on another day can get other verdicts ("up 12% today").
+    const postedAt = typeof meta.postedAt === 'string' ? meta.postedAt.trim() : '';
+    const hash = hashPost(postedAt ? `${text}\n\nposted: ${postedAt}` : text);
     const log = (cached: boolean) =>
       store
         .logCheck({ postHash: hash, source: meta.source ?? 'paste', device: meta.device ?? null, cached })
@@ -160,7 +169,7 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
     }
 
     // 2. Otherwise check it, save the result, and log the check.
-    const result = await checkPost(text, deps);
+    const result = await checkPost(text, deps, options);
     try {
       await store.savePost({ hash, text: cleanPostText(text), result, extractor: extractor.name, version: RESULT_VERSION });
     } catch (error) {

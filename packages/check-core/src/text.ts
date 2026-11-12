@@ -8,6 +8,17 @@ const TIMESTAMP = /^(\d{1,2}[smhd]|[A-Z][a-z]{2} \d{1,2}(, \d{4})?)$/;
 const INLINE_TOKEN = /^[$@][A-Za-z_][\w.]*$/;
 const NOISE_LINE = /^(https?:\/\/\S+|·)$/;
 
+/**
+ * The timestamp in the author block X puts above a copied post ("17h", "Nov 9"),
+ * so a post's date can be read without asking. Null when there is no author block.
+ */
+export function postTimestamp(raw: string): string | null {
+  const lines = raw.replace(/\r\n?/g, '\n').replace(LINK, '$1').split('\n');
+  const stamp = lines.slice(0, 6).findIndex((l) => TIMESTAMP.test(l.trim()));
+  if (stamp === -1 || !lines.slice(0, stamp).some((l) => /^@\w+$/.test(l.trim()))) return null;
+  return lines[stamp]!.trim();
+}
+
 export function cleanPostText(raw: string): string {
   let lines = raw.replace(/\r\n?/g, '\n').replace(LINK, '$1').split('\n');
 

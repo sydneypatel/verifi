@@ -80,7 +80,7 @@ const server = createServer(async (req, res) => {
     if (typeof text !== 'string') throw new InputError('Send JSON like {"text": "..."}');
 
     const device = cleanDeviceId(req.headers['x-verifi-device'] ?? req.headers['x-hypecheck-device']);
-    const { result, postHash } = await checker.check(text, { source: cleanSource(body.source), device });
+    const { result, postHash } = await checker.check(text, { source: cleanSource(body.source), device, postedAt: typeof body.postedAt === 'string' ? body.postedAt : null });
     send(res, 200, { ...result, postHash });
   } catch (error) {
     if (error instanceof InputError) return send(res, 400, { error: error.message });

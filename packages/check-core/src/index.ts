@@ -1,5 +1,6 @@
 export * from './types';
-export { checkPost, InputError, MAX_POST_LENGTH, type CheckDeps } from './pipeline';
+export { checkPost, dedupeClaims, InputError, MAX_POST_LENGTH, postTickers, sharedPostPeriod, statedPostPeriod, type CheckDeps, type CheckOptions } from './pipeline';
+export { addDays, daysBetween, newYorkDate, parsePostDate } from './dates';
 export { MemoryCache, type EvidenceCache } from './cache';
 export {
   EMPTY_CLAIM,
@@ -15,8 +16,8 @@ export { createAnthropicReleaseReader } from './llm/anthropicRelease';
 export { MAX_IMAGE_BYTES, createAnthropicScreenshotReader, parseImageDataUrl } from './llm/anthropicScreenshot';
 export { createRuleBasedExtractor } from './llm/ruleBased';
 export { normalizeClaims, normalizeTicker } from './llm/normalize';
-export type { EvidenceSource, Evaluation } from './sources/types';
-export { SecClient, filingUrl, type FetchLike } from './sources/sec/client';
+export type { CompanyDirectory, EvidenceSource, Evaluation } from './sources/types';
+export { SecClient, companyKey, filingUrl, namesMatch, type FetchLike } from './sources/sec/client';
 export { summarizeRevenue } from './sources/sec/revenueFacts';
 export { createSecRevenueSource, evaluateRevenueClaim } from './sources/sec/revenueSource';
 export { createSecFigureSource, evaluateFigureClaim } from './sources/sec/figureSource';
@@ -33,7 +34,7 @@ export {
 export { FinnhubClient } from './sources/finnhub/client';
 export { createFinnhubMarketSource, evaluateMarketClaim } from './sources/finnhub/marketSource';
 export { createFinnhubEarningsSource, evaluateEarningsClaim } from './sources/finnhub/earningsSource';
-export { cleanPostText } from './text';
+export { cleanPostText, postTimestamp } from './text';
 export { formatDate, formatUsd, formatSignedPercent, formatPerShare, formatPrice, formatTime } from './format';
 export {
   MAX_SNAPSHOT_TICKERS,

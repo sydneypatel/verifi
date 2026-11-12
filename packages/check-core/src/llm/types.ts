@@ -75,6 +75,7 @@ export const CLAIM_TYPES = [
   'market_cap',
   'prediction',
   'opinion',
+  'personal',
   'other',
 ] as const;
 
@@ -82,7 +83,13 @@ export const ESTIMATE_RESULTS = ['beat', 'miss', 'in_line'] as const;
 
 export const PRICE_WINDOWS = ['day', 'week', 'month', 'ytd', 'year'] as const;
 
-export const METRICS = ['revenue', 'net_income', 'other'] as const;
+export const METRICS = ['revenue', 'operating_income', 'net_income', 'eps', 'free_cash_flow', 'guidance', 'other'] as const;
+
+export const COMPARISONS = ['yoy', 'qoq'] as const;
+
+export const SESSIONS = ['pre_market', 'after_hours'] as const;
+
+export const PRICE_REFERENCES = ['high_52_week', 'high_all_time', 'high'] as const;
 
 /** Every field of a claim that an extractor may leave empty. Spread this, then override. */
 export const EMPTY_CLAIM = {
@@ -98,4 +105,10 @@ export const EMPTY_CLAIM = {
   bound: null,
   vsEstimate: null,
   window: null,
+  windowDays: null,
+  session: null,
+  reference: null,
+  comparison: null,
+  segment: null,
+  postedAt: null,
 } as const;

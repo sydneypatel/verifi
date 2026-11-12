@@ -1,6 +1,7 @@
 import type { Quarter } from '../../types';
 import type { ReleaseReader, ReleaseReading } from '../../llm/types';
 import { SecClient, filingUrl, type FilingFile } from './client';
+import type { FigureMetric } from '../../types';
 import { DAY, toTime, type Series, type SeriesPeriod } from './series';
 
 // Companies announce earnings in a press release (Form 8-K, Item 2.02, Exhibit 99.1)
@@ -230,8 +231,9 @@ const iso = (time: number) => new Date(time).toISOString().slice(0, 10);
  * than anything filed. Also adds the year-earlier quarter from the release if
  * the filings lack it, so growth can still be worked out.
  */
-export function withRelease(series: Series, release: EarningsRelease | null | undefined, metric: 'revenue' | 'net_income'): Series {
-  const figure = metric === 'revenue' ? release?.revenue : release?.netIncome;
+export function withRelease(series: Series, release: EarningsRelease | null | undefined, metric: FigureMetric): Series {
+  // Releases are read for revenue and net income only.
+  const figure = metric === 'revenue' ? release?.revenue : metric === 'net_income' ? release?.netIncome : null;
   if (!release || !figure) return series;
 
   const end = toTime(release.periodEnd);

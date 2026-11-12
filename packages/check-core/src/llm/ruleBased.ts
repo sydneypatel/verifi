@@ -1,5 +1,5 @@
-import type { Direction, EstimateResult, ExtractedClaim, Metric, PriceWindow, Quarter } from '../types';
-import { normalizeTicker } from './normalize';
+import type { Comparison, Direction, EstimateResult, ExtractedClaim, Metric, PriceReference, PriceWindow, Quarter, Session } from '../types';
+import { isPersonal, normalizeClaims, normalizeTicker } from './normalize';
 import { EMPTY_CLAIM, type ClaimExtractor } from './types';
 
 // A no-key fallback so the whole pipeline runs without an LLM: in tests, in
@@ -16,7 +16,7 @@ const REVENUE_PERCENT = new RegExp(
 const PERCENT_REVENUE_GROWTH = /(\d+(?:\.\d+)?)\s?%\s+(?:revenue|sales)\s+(growth|increase|decline|drop)/i;
 const REVENUE_MULTIPLE = /\b(?:revenue|revenues|sales)\b[^.!?\n]{0,40}?\b(doubled|tripled|quadrupled|doubling|tripling)\b/i;
 const SHORT_INTEREST = /\bshort interest\b[^.!?\n]{0,60}?(\d+(?:\.\d+)?)\s?%[^.!?\n,;]*/i;
-const PREDICTION = /(?:→|->)\s*\$\d|\b(?:must|strong) buy\b|\$\d+(?:\.\d+)?\s+(?:stock|target|price target|by)\b|\bprice target\b|\bto the moon\b|\bwill (?:hit|reach|double|triple|moon|10x)\b|\bgoing to \$\d+/i;
+const PREDICTION = /(?:→|->)\s*\$\d|\b\d+(?:\.\d+)?\s?%\s+upside\b|\bupside (?:of|to)\b|\b(?:must|strong) buy\b|\$\d+(?:\.\d+)?\s+(?:stock|target|price target|by)\b|\bprice target\b|\bto the moon\b|\bwill (?:hit|reach|double|triple|moon|10x)\b|\bgoing to \$\d+/i;
 
 // "$11.5B", "$42 million". Captures the number and the unit.
 const AMOUNT = '\\$(\\d+(?:\\.\\d+)?)\\s?(trillion|billion|million|bn|mn|[TBM])\\b';
@@ -25,6 +25,20 @@ const REVENUE_THEN_AMOUNT = new RegExp(`\\b(?:revenue|revenues|sales)${LINK}${AM
 const AMOUNT_THEN_REVENUE = new RegExp(`${AMOUNT}\\s+(?:in|of)\\s+(?:\\w+\\s+){0,2}?(?:revenue|revenues|sales)\\b`, 'i');
 const NET_THEN_AMOUNT = new RegExp(`\\bnet (loss|income|profit)${LINK}${AMOUNT}`, 'i');
 const AMOUNT_THEN_NET = new RegExp(`${AMOUNT}\\s+(?:in\\s+)?net (loss|income|profit)\\b`, 'i');
+const OPERATING_THEN_AMOUNT = new RegExp(`\\boperating (loss|income|profit)${LINK}${AMOUNT}`, 'i');
+const AMOUNT_THEN_OPERATING = new RegExp(`${AMOUNT}\\s+(?:in\\s+)?(?:of\\s+)?operating (loss|income|profit)\\b`, 'i');
+
+// One business line, not the company: "AI Cloud revenue", "Azure grew 40%", "ad revenue".
+const NAMED_SEGMENT = '(?:AI Cloud|Azure|AWS|Google Cloud|Microsoft Cloud|Intelligent Cloud|YouTube|iPhone|data ?cent(?:er|re))';
+const SEGMENT_BEFORE_REVENUE = new RegExp(
+  `\\b(${NAMED_SEGMENT}|ad|ads|advertising|cloud|services|gaming|automotive|subscription|segment)\\s+(?:revenue|revenues|sales)\\b`,
+  'i',
+);
+const SEGMENT_GROWTH = new RegExp(
+  `\\b(${NAMED_SEGMENT})\\b[^.!?\\n%]{0,30}?\\b(${'up|grew|grow|growth|increased|jumped|rose|surged|soared|climbed|down|fell|dropped|declined'})\\b[^.!?\\n%]{0,15}?(\\d+(?:\\.\\d+)?)\\s?%`,
+  'i',
+);
+const EPS_GROWTH = new RegExp(`\\b(?:eps|earnings per share)\\b[^.!?\\n%]{0,20}?\\b(${UP_WORDS}|${DOWN_WORDS})\\b[^.!?\\n%]{0,15}?(\\d+(?:\\.\\d+)?)\\s?%`, 'i');
 
 // "$NVDA is up 12% today", "shares fell 30% this year", "the stock doubled".
 const MOVE_WORDS = `${UP_WORDS}|${DOWN_WORDS}|gained|gain|lost|rallied|ripped|ran|tanked|dumped|plunged|crashed|popped|spiked`;
@@ -35,6 +49,14 @@ const PRICE_MOVE = new RegExp(
 const PRICE_MULTIPLE = /(?:\$[A-Za-z]{1,5}|\b(?:stock|shares)\b)[^.!?\n$]{0,20}?\b(doubled|tripled|halved)\b/i;
 // Words that mean the "up 40%" is about a business number, not the share price.
 const NOT_PRICE = /\b(revenue|revenues|sales|earnings|eps|income|profit|margin|users|short interest)\b/i;
+
+// "$500B wiped out", "erased $1T", "added $200B in market value".
+const CAP_CHANGE = new RegExp(
+  `${AMOUNT}\\s+(?:in market (?:value|cap)\\s+|of (?:market )?value\\s+)?(wiped out|wiped off|erased|lost|vanished|added|gained)|\\b(wiped|erased|lost|added|gained)\\s+(?:out\\s+|off\\s+)?${AMOUNT}`,
+  'i',
+);
+// "trading at $182", "closed at $65.78", "shares at $40".
+const CURRENT_PRICE = /(?:\$[A-Za-z]{1,5}|\b(?:stock|shares|it))\b[^.!?\n$]{0,20}?\b(?:trading at|trades at|closed at|at|now)\s+\$(\d+(?:\.\d+)?)(?!\s?(?:trillion|billion|million|bn|mn|[TBMK])\b)(?!\s+(?:stock|target|price target|by))/i;
 
 const MARKET_CAP_THEN_AMOUNT = new RegExp(`\\bmarket (?:cap|capitalization|value)\\b[^.!?\\n$]{0,20}?${AMOUNT}`, 'i');
 const AMOUNT_THEN_MARKET_CAP = new RegExp(`${AMOUNT}\\s+(?:market cap|market value|company)\\b`, 'i');
@@ -63,6 +85,51 @@ function windowOf(sentence: string): PriceWindow | null {
   return null;
 }
 
+/** "48 hours" is 2 days, "3 years" 1095, "since IPO" a span longer than any the data has. */
+function windowDaysOf(sentence: string): number | null {
+  if (/\b(since (?:the )?ipo|all[- ]time|ever|since inception)\b/i.test(sentence) && !/\ball[- ]time high\b/i.test(sentence)) return 36500;
+  const m = sentence.match(/\b(?:past|last|in|over)?\s*(\d+)\s?(hours?|hrs?|days?|weeks?|months?|years?|yrs?)\b/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const unit = m[2]!.toLowerCase();
+  if (unit.startsWith('h')) return n % 24 === 0 && n > 24 ? n / 24 : null;
+  if (unit.startsWith('d')) return n === 1 ? null : n;
+  if (unit.startsWith('w')) return n === 1 || n === 52 ? null : n * 7;
+  if (unit.startsWith('m')) return n === 12 || n === 1 ? null : n * 30;
+  return n === 1 ? null : n * 365;
+}
+
+function sessionOf(sentence: string): Session | null {
+  if (/\bpre[- ]?market\b/i.test(sentence)) return 'pre_market';
+  if (/\b(after[- ]hours|afterhours|extended[- ]hours|overnight)\b/i.test(sentence)) return 'after_hours';
+  return null;
+}
+
+function referenceOf(sentence: string): PriceReference | null {
+  if (/\bfrom (?:its |the )?(?:all[- ]time high|ath|record high)s?\b/i.test(sentence)) return 'high_all_time';
+  if (/\bfrom (?:its |the )?52[- ]week highs?\b/i.test(sentence)) return 'high_52_week';
+  if (/\b(?:from|off) (?:its |the )?(?:highs?|peak|top)\b/i.test(sentence)) return 'high';
+  return null;
+}
+
+function comparisonOf(sentence: string): Comparison | null {
+  if (/\b(qoq|q\/q|quarter[- ]over[- ]quarter|sequentially|vs\.? (?:the )?(?:last|prior|previous) quarter)\b/i.test(sentence)) return 'qoq';
+  if (/\b(yoy|y\/y|year[- ]over[- ]year|vs\.? (?:a year ago|last year))\b/i.test(sentence)) return 'yoy';
+  return null;
+}
+
+function segmentOf(sentence: string): string | null {
+  return sentence.match(SEGMENT_BEFORE_REVENUE)?.[1] ?? null;
+}
+
+function estimateMetric(span: string): Metric {
+  if (/\b(eps|earnings)\b/i.test(span)) return 'eps';
+  if (/\b(revenue|revenues|sales|top line)\b/i.test(span)) return 'revenue';
+  if (/\b(guidance|outlook|forecast)\b/i.test(span)) return 'guidance';
+  if (/\bfree cash flow|fcf\b/i.test(span)) return 'free_cash_flow';
+  return 'eps';
+}
+
 function estimateOf(word: string): EstimateResult {
   const w = word.toLowerCase();
   if (w.startsWith('miss')) return 'miss';
@@ -71,7 +138,7 @@ function estimateOf(word: string): EstimateResult {
 }
 
 function periodOf(sentence: string): 'quarter' | 'year' | null {
-  if (/\b(quarter|q[1-4]|qoq)\b/i.test(sentence)) return 'quarter';
+  if (/\b(quarter|q[1-4]|qoq|q\/q|sequentially)\b/i.test(sentence)) return 'quarter';
   if (/\b(annual|full[- ]year|fiscal year|yearly|fy\s?\d{2,4})\b/i.test(sentence)) return 'year';
   return null;
 }
@@ -87,8 +154,9 @@ export function createRuleBasedExtractor(): ClaimExtractor {
     async extractClaims(postText: string): Promise<ExtractedClaim[]> {
       const cashtags = [...new Set([...postText.matchAll(/\$([A-Za-z]{1,5})\b/g)].map((m) => normalizeTicker(m[1])).filter(Boolean))];
       const postTicker = cashtags.length === 1 ? cashtags[0]! : null;
+      // Sentences, lines, and the items of a list ("•", ";", " | ") are read one by one.
       const sentences = postText
-        .split(/(?<=[.!?])\s+|\n+/)
+        .split(/(?<=[.!?])\s+|\n+|;\s*|\s+\|\s+|\s*[•·▪]\s+/)
         .map((s) => s.trim())
         .filter(Boolean);
 
@@ -99,6 +167,8 @@ export function createRuleBasedExtractor(): ClaimExtractor {
         const base = { ...EMPTY_CLAIM, ticker: normalizeTicker(sentence.match(/\$([A-Za-z]{1,5})\b/)?.[1]) ?? postTicker };
         let matched = false;
         const period = periodOf(sentence);
+        const comparison = comparisonOf(sentence);
+        const segment = segmentOf(sentence);
         const year = sentence.match(/\b(20\d{2})\b/)?.[1];
         const quarter = sentence.match(/\bQ([1-4])\b/i)?.[1];
 
@@ -106,16 +176,28 @@ export function createRuleBasedExtractor(): ClaimExtractor {
         const revenue = sentence.match(REVENUE_PERCENT);
         const flipped = sentence.match(PERCENT_REVENUE_GROWTH);
         const multiple = sentence.match(REVENUE_MULTIPLE);
+        const segmentMove = sentence.match(SEGMENT_GROWTH);
+        const growth = { period, comparison, segment, fiscalYear: year ? Number(year) : null, fiscalQuarter: quarter ? (Number(quarter) as Quarter) : null };
+        // The quote starts at the segment name, so "AI Cloud revenue" is part of it.
+        const fromSegment = (m: RegExpMatchArray) => {
+          const at = segment ? sentence.toLowerCase().indexOf(segment.toLowerCase()) : -1;
+          return at !== -1 && at < m.index! ? sentence.slice(at, m.index! + m[0].length).trim() : m[0].trim();
+        };
         if (revenue) {
           const direction: Direction = DOWN.test(revenue[1]!) ? 'down' : 'up';
-          claims.push({ ...base, quote: revenue[0].trim(), type: 'revenue_growth', claimedPercent: Number(revenue[2]), direction, period, bound: boundOf(revenue[0]) });
+          claims.push({ ...base, ...growth, quote: fromSegment(revenue), type: 'revenue_growth', claimedPercent: Number(revenue[2]), direction, bound: boundOf(revenue[0]) });
           matched = true;
         } else if (flipped) {
           const direction: Direction = DOWN.test(flipped[2]!) ? 'down' : 'up';
-          claims.push({ ...base, quote: flipped[0].trim(), type: 'revenue_growth', claimedPercent: Number(flipped[1]), direction, period });
+          claims.push({ ...base, ...growth, quote: fromSegment(flipped), type: 'revenue_growth', claimedPercent: Number(flipped[1]), direction });
           matched = true;
         } else if (multiple) {
-          claims.push({ ...base, quote: multiple[0].trim(), type: 'revenue_growth', claimedPercent: MULTIPLES[multiple[1]!.toLowerCase()] ?? null, direction: 'up', period, bound: boundOf(multiple[0]) });
+          claims.push({ ...base, ...growth, quote: fromSegment(multiple), type: 'revenue_growth', claimedPercent: MULTIPLES[multiple[1]!.toLowerCase()] ?? null, direction: 'up', bound: boundOf(multiple[0]) });
+          matched = true;
+        } else if (segmentMove) {
+          // "Azure grew 40%": a business line's revenue, named without the word "revenue".
+          const direction: Direction = DOWN.test(segmentMove[2]!) ? 'down' : 'up';
+          claims.push({ ...base, ...growth, segment: segmentMove[1]!, quote: segmentMove[0].trim(), type: 'revenue_growth', claimedPercent: Number(segmentMove[3]), direction });
           matched = true;
         }
 
@@ -123,6 +205,7 @@ export function createRuleBasedExtractor(): ClaimExtractor {
         const figure = (quote: string, metric: Metric, amount: number) => {
           claims.push({
             ...base,
+            segment: metric === 'revenue' ? segment : null,
             bound: boundOf(quote),
             quote: quote.trim(),
             type: 'financial_figure',
@@ -144,13 +227,24 @@ export function createRuleBasedExtractor(): ClaimExtractor {
         if (netA) figure(netA[0], 'net_income', dollars(netA[2]!, netA[3]!) * (netA[1]!.toLowerCase() === 'loss' ? -1 : 1));
         else if (netB) figure(netB[0], 'net_income', dollars(netB[1]!, netB[2]!) * (netB[3]!.toLowerCase() === 'loss' ? -1 : 1));
 
+        // Operating income is its own line, never net income.
+        const opA = sentence.match(OPERATING_THEN_AMOUNT);
+        const opB = sentence.match(AMOUNT_THEN_OPERATING);
+        if (opA) figure(opA[0], 'operating_income', dollars(opA[2]!, opA[3]!) * (opA[1]!.toLowerCase() === 'loss' ? -1 : 1));
+        else if (opB) figure(opB[0], 'operating_income', dollars(opB[1]!, opB[2]!) * (opB[3]!.toLowerCase() === 'loss' ? -1 : 1));
+
         // "$NVDA is up 12% today": the share price, unless the sentence is about a business number.
-        if (!revenue && !flipped && !multiple) {
+        const priceTiming = { window: windowOf(sentence), windowDays: windowDaysOf(sentence), session: sessionOf(sentence), reference: referenceOf(sentence) };
+        const capChange = sentence.match(CAP_CHANGE);
+        if (!revenue && !flipped && !multiple && !segmentMove && !capChange) {
           const move = sentence.match(PRICE_MOVE);
           const doubled = sentence.match(PRICE_MULTIPLE);
+          const price = sentence.match(CURRENT_PRICE);
           if (move && !NOT_PRICE.test(move[0])) {
             const direction: Direction = DOWN.test(move[1]!) || /^(lost|tanked|dumped|plunged|crashed)$/i.test(move[1]!) ? 'down' : 'up';
-            claims.push({ ...base, quote: move[0].trim(), type: 'price_move', claimedPercent: Number(move[2]), direction, window: windowOf(sentence), bound: boundOf(move[0]) });
+            // Keep "from its highs" and "after hours" in the quote when they follow the number.
+            const tail = sentence.slice(move.index! + move[0].length).match(/^\s*(?:from (?:its |the )?(?:all[- ]time |52[- ]week |record )?(?:highs?|peak|ath)|in (?:pre[- ]?market|after[- ]hours)(?: trading)?|after[- ]hours|pre[- ]?market)/i)?.[0] ?? '';
+            claims.push({ ...base, ...priceTiming, quote: (move[0] + tail).trim(), type: 'price_move', claimedPercent: Number(move[2]), direction, bound: boundOf(move[0]) });
             matched = true;
           } else if (doubled && !NOT_PRICE.test(doubled[0])) {
             const word = doubled[1]!.toLowerCase();
@@ -160,16 +254,29 @@ export function createRuleBasedExtractor(): ClaimExtractor {
               type: 'price_move',
               claimedPercent: word === 'halved' ? 50 : (MULTIPLES[word] ?? null),
               direction: word === 'halved' ? 'down' : 'up',
-              window: windowOf(sentence),
+              ...priceTiming,
             });
             matched = true;
+          } else if (price && !NOT_PRICE.test(price[0])) {
+            claims.push({ ...base, ...priceTiming, quote: price[0].trim(), type: 'price_move', claimedAmount: Number(price[1]) });
+            matched = true;
           }
+        }
+
+        // "$500B wiped out": a change in market value, checked as the move times the value.
+        if (capChange) {
+          const number = capChange[1] ?? capChange[5]!;
+          const unit = capChange[2] ?? capChange[6]!;
+          const word = (capChange[3] ?? capChange[4]!).toLowerCase();
+          const direction: Direction = /^(added|gained)$/.test(word) ? 'up' : 'down';
+          claims.push({ ...base, quote: capChange[0].trim(), type: 'market_cap', claimedAmount: dollars(number, unit), direction, window: windowOf(sentence), windowDays: windowDaysOf(sentence) });
+          matched = true;
         }
 
         // "a $3T company", "market cap of $50B"
         const capA = sentence.match(MARKET_CAP_THEN_AMOUNT);
         const capB = sentence.match(AMOUNT_THEN_MARKET_CAP);
-        const cap = capA ?? capB;
+        const cap = capChange ? null : (capA ?? capB);
         if (cap) {
           claims.push({ ...base, quote: cap[0].trim(), type: 'market_cap', claimedAmount: dollars(cap[1]!, cap[2]!), bound: boundOf(cap[0]) });
           matched = true;
@@ -177,12 +284,26 @@ export function createRuleBasedExtractor(): ClaimExtractor {
 
         // "crushed earnings", "EPS of $1.25": one earnings claim per sentence.
         // "Revenue beat estimates" is about revenue, not earnings per share.
-        const vsRaw = sentence.match(VS_ESTIMATE);
-        const vs = vsRaw && /\b(revenue|revenues|sales)\b[^.!?\n]{0,15}$/i.test(sentence.slice(0, vsRaw.index)) ? null : vsRaw;
+        const vs = sentence.match(VS_ESTIMATE);
+        // "Revenue beat estimates": a beat on revenue, which EPS can't prove.
+        const vsMetric = vs ? (/\b(eps|earnings)\b/i.test(vs[0]) ? 'eps' : estimateMetric(sentence.slice(Math.max(0, vs.index! - 12), vs.index! + vs[0].length))) : 'eps';
         const eps = sentence.match(EPS_AMOUNT);
+        const epsGrowth = vs || eps ? null : sentence.match(EPS_GROWTH);
+        if (epsGrowth) {
+          // "EPS up 40% YoY" is growth, not a beat.
+          const direction: Direction = DOWN.test(epsGrowth[1]!) ? 'down' : 'up';
+          claims.push({ ...base, quote: epsGrowth[0].trim(), type: 'earnings_result', metric: 'eps', claimedPercent: Number(epsGrowth[2]), direction, comparison, period });
+          matched = true;
+        }
         if (vs || eps) {
           const spans = [vs, eps].filter((m): m is RegExpMatchArray => Boolean(m));
-          const start = Math.min(...spans.map((m) => m.index!));
+          let start = Math.min(...spans.map((m) => m.index!));
+          // "Revenue beat estimates": keep the measure in the quote.
+          if (vs && vsMetric !== 'eps') {
+            const before = sentence.slice(Math.max(0, vs.index! - 12), vs.index!);
+            const at = before.search(/\b(revenue|revenues|sales|top line|guidance|outlook|forecast|free cash flow|fcf)\b/i);
+            if (at !== -1) start = Math.min(start, Math.max(0, vs.index! - 12) + at);
+          }
           const end = Math.max(...spans.map((m) => m.index! + m[0].length));
           let perShare: number | null = null;
           if (eps) {
@@ -193,6 +314,7 @@ export function createRuleBasedExtractor(): ClaimExtractor {
             ...base,
             quote: sentence.slice(start, end).trim(),
             type: 'earnings_result',
+            metric: vsMetric,
             vsEstimate: vs ? estimateOf(vs[1] ?? vs[3]!) : null,
             claimedAmount: perShare,
             period: quarter ? 'quarter' : null,
@@ -208,12 +330,15 @@ export function createRuleBasedExtractor(): ClaimExtractor {
           matched = true;
         }
 
-        if (!matched && PREDICTION.test(sentence)) {
+        if (!matched && isPersonal(sentence)) {
+          claims.push({ ...base, quote: sentence.replace(/[.!?]+$/, ''), type: 'personal' });
+        } else if (!matched && PREDICTION.test(sentence)) {
           claims.push({ ...base, quote: sentence.replace(/[.!?]+$/, ''), type: 'prediction' });
         }
       }
 
-      return claims;
+      // The same clean-up as model output: upside targets, personal positions, segments.
+      return normalizeClaims(claims);
     },
   };
 }

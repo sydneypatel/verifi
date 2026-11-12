@@ -59,6 +59,17 @@ export const demoCompanyFacts: SecCompanyFacts = {
           ],
         },
       },
+      OperatingIncomeLoss: {
+        label: 'Operating Income (Loss)',
+        units: {
+          USD: [
+            q('2025-04-01', '2025-06-30', -7_900_000, ...Q2_25),
+            q('2026-01-01', '2026-03-31', -5_600_000, ...Q1_26),
+            q('2025-04-01', '2025-06-30', -7_900_000, ...Q2_26),
+            q('2026-04-01', '2026-06-30', -4_100_000, ...Q2_26),
+          ],
+        },
+      },
       NetIncomeLoss: {
         label: 'Net Income (Loss)',
         units: {
@@ -104,6 +115,8 @@ export const demoFinnhub: Record<string, unknown> = {
       monthToDatePriceReturnDaily: 6.2,
       yearToDatePriceReturnDaily: -14.5,
       '52WeekPriceReturnDaily': -22.1,
+      '52WeekHigh': 26.31,
+      '52WeekHighDate': '2026-02-11',
       marketCapitalization: 1290.5,
     },
   },
