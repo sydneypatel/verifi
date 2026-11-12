@@ -7,6 +7,12 @@ export type ClaimType =
   | 'short_interest'
   | 'corporate_event'
   | 'earnings_result'
+  /** What analysts expect a coming report to show: "EPS expected at $4.06", "consensus revenue $10.3B". */
+  | 'consensus_estimate'
+  /** When a company reports: "reports earnings today after close". */
+  | 'earnings_date'
+  /** The move the options market prices in for a report. Needs options data. */
+  | 'implied_move'
   | 'price_move'
   | 'market_cap'
   | 'prediction'
@@ -92,6 +98,8 @@ export interface Claim {
   comparison: Comparison | null;
   /** The business line the claim is about ("Azure", "ad revenue", "data center"), or null for the whole company. */
   segment: string | null;
+  /** Earnings-date claims: the day as the post says it ("today", "Thursday", "Nov 19"). Before or after the market is in session. */
+  eventDate: string | null;
   /** The day the post was written (YYYY-MM-DD, New York time), when known. "Today" and "this week" mean that day's. */
   postedAt: string | null;
 }
@@ -234,9 +242,29 @@ export interface PriceHistoryEvidence extends EvidenceBase {
   unavailable?: string;
 }
 
+/** One scheduled or past earnings report, with the analyst consensus before it. */
+export interface CalendarReport {
+  /** The day the company reports, YYYY-MM-DD. */
+  date: string;
+  /** Before the open, after the close, during market hours, or not known. */
+  hour: 'bmo' | 'amc' | 'dmh' | null;
+  fiscalYear: number | null;
+  fiscalQuarter: Quarter | null;
+  epsEstimate: number | null;
+  revenueEstimate: number | null;
+  epsActual: number | null;
+  revenueActual: number | null;
+}
+
+export interface CalendarEvidence extends EvidenceBase {
+  kind: 'earnings_calendar';
+  /** Oldest first. */
+  reports: CalendarReport[];
+}
+
 // Add new evidence kinds to this union as adapters are added
 // (short interest, insider trades, ...).
-export type Evidence = RevenueEvidence | FigureEvidence | EarningsEvidence | MarketEvidence | PriceHistoryEvidence;
+export type Evidence = RevenueEvidence | FigureEvidence | EarningsEvidence | MarketEvidence | PriceHistoryEvidence | CalendarEvidence;
 
 export interface CheckedClaim {
   claim: Claim;

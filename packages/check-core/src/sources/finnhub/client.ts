@@ -49,6 +49,10 @@ export interface FinnhubCalendarRow {
   quarter?: number;
   year?: number;
   epsEstimate?: number | null;
+  /** Consensus revenue, in dollars. */
+  revenueEstimate?: number | null;
+  epsActual?: number | null;
+  revenueActual?: number | null;
   symbol: string;
 }
 

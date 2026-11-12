@@ -5,8 +5,8 @@ const MAX_CLAIMS = 40;
 
 // Claim types whose claimedAmount means something: dollars, dollars per share,
 // or (price_move) the share price the post states.
-const AMOUNT_TYPES: ClaimType[] = ['financial_figure', 'earnings_result', 'market_cap', 'price_move'];
-const METRIC_TYPES: ClaimType[] = ['financial_figure', 'earnings_result'];
+const AMOUNT_TYPES: ClaimType[] = ['financial_figure', 'earnings_result', 'consensus_estimate', 'market_cap', 'price_move'];
+const METRIC_TYPES: ClaimType[] = ['financial_figure', 'earnings_result', 'consensus_estimate'];
 // Claim types that can be about one business line.
 const SEGMENT_TYPES: ClaimType[] = ['revenue_growth', 'financial_figure', 'earnings_result'];
 
@@ -70,7 +70,7 @@ export function normalizeClaims(raw: unknown): ExtractedClaim[] {
     let type = oneOf(row.type, CLAIM_TYPES) ?? 'other';
     // Upside and price targets are forecasts. The poster's own gains and losses
     // are set aside. Both whatever the model called them.
-    if (type !== 'prediction' && UPSIDE.test(quote)) type = 'prediction';
+    if (type !== 'prediction' && type !== 'consensus_estimate' && UPSIDE.test(quote)) type = 'prediction';
     else if (type !== 'personal' && isPersonal(quote)) type = 'personal';
 
     const percent = asNumber(row.claimedPercent);
@@ -82,6 +82,10 @@ export function normalizeClaims(raw: unknown): ExtractedClaim[] {
     let metric: Metric | null = METRIC_TYPES.includes(type)
       ? (oneOf(row.metric, METRICS) ?? (type === 'earnings_result' ? 'eps' : 'other'))
       : null;
+    // A consensus figure is revenue or EPS; anything else isn't in the calendar.
+    if (type === 'consensus_estimate' && metric !== 'revenue' && metric !== 'eps') {
+      metric = /\b(?:revenue|revenues|sales|top line)\b/i.test(quote) ? 'revenue' : /\b(?:eps|earnings|per share)\b/i.test(quote) ? 'eps' : 'other';
+    }
     // "Crushed earnings" is about earnings per share, even when the model says "other".
     if (type === 'earnings_result' && metric === 'other' && EARNINGS_WORDS.test(quote) && !OTHER_MEASURE.test(quote)) metric = 'eps';
 
@@ -118,10 +122,11 @@ export function normalizeClaims(raw: unknown): ExtractedClaim[] {
       vsEstimate,
       window,
       windowDays: days !== null && days > 0 ? Math.round(days) : null,
-      session: type === 'price_move' ? oneOf(row.session, SESSIONS) : null,
+      session: type === 'price_move' || type === 'earnings_date' ? oneOf(row.session, SESSIONS) : null,
       reference: type === 'price_move' ? oneOf(row.reference, PRICE_REFERENCES) : null,
       comparison: type === 'revenue_growth' || type === 'earnings_result' ? oneOf(row.comparison, COMPARISONS) : null,
       segment: segment && !NOT_A_SEGMENT.test(segment) ? segment : null,
+      eventDate: type === 'earnings_date' ? asString(row.eventDate)?.slice(0, 40) ?? null : null,
       postedAt: null,
     });
     if (claims.length >= MAX_CLAIMS) break;

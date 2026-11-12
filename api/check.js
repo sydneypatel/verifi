@@ -117,6 +117,31 @@ function postDateInText(text, now) {
   }
   return null;
 }
+function resolveEventDay(text, base) {
+  const t = text.trim().toLowerCase().replace(/^on\s+/, "");
+  const one = (d) => ({ from: d, to: d });
+  if (t === "today" || t === "tonight") return one(base);
+  if (t === "tomorrow") return one(addDays(base, 1));
+  const monday = addDays(base, -((weekdayOf(base) + 6) % 7));
+  if (t === "this week") return { from: monday, to: addDays(monday, 4) };
+  if (t === "next week") return { from: addDays(monday, 7), to: addDays(monday, 11) };
+  const wd = t.match(/^(?:this |next )?([a-z]{3})[a-z]*$/);
+  if (wd && WEEKDAYS.includes(wd[1])) {
+    const ahead = (WEEKDAYS.indexOf(wd[1]) - weekdayOf(base) + 7) % 7;
+    return one(addDays(base, ahead + (t.startsWith("next ") && ahead === 0 ? 7 : 0)));
+  }
+  const md = t.match(/^([a-z]{3,9})\.? (\d{1,2})(?:st|nd|rd|th)?(?:,? (\d{4}))?$/);
+  if (md) {
+    const month = MONTHS[md[1].slice(0, 3)];
+    if (!month) return null;
+    const year = md[3] ? Number(md[3]) : Number(base.slice(0, 4));
+    let day = validDate(year, month, Number(md[2]));
+    if (day && !md[3] && daysBetween(base, day) < -60) day = validDate(year + 1, month, Number(md[2]));
+    return day ? one(day) : null;
+  }
+  const iso3 = parsePostDate(t, /* @__PURE__ */ new Date(`${base}T12:00:00Z`));
+  return iso3 && /\d/.test(t) ? one(iso3) : null;
+}
 
 // ../../packages/check-core/src/llm/types.ts
 var CLAIM_TYPES = [
@@ -125,6 +150,9 @@ var CLAIM_TYPES = [
   "short_interest",
   "corporate_event",
   "earnings_result",
+  "consensus_estimate",
+  "earnings_date",
+  "implied_move",
   "price_move",
   "market_cap",
   "prediction",
@@ -156,13 +184,14 @@ var EMPTY_CLAIM = {
   reference: null,
   comparison: null,
   segment: null,
+  eventDate: null,
   postedAt: null
 };
 
 // ../../packages/check-core/src/llm/normalize.ts
 var MAX_CLAIMS = 40;
-var AMOUNT_TYPES = ["financial_figure", "earnings_result", "market_cap", "price_move"];
-var METRIC_TYPES = ["financial_figure", "earnings_result"];
+var AMOUNT_TYPES = ["financial_figure", "earnings_result", "consensus_estimate", "market_cap", "price_move"];
+var METRIC_TYPES = ["financial_figure", "earnings_result", "consensus_estimate"];
 var SEGMENT_TYPES = ["revenue_growth", "financial_figure", "earnings_result"];
 var UPSIDE = /\b(?:\d+(?:\.\d+)?\s?%\s+upside|upside (?:of|to)|price target|pt (?:of )?\$?\d|target (?:of|price)\s+\$?\d)/i;
 var PERSONAL = /^(?:i|i'm|i am|i've|we|we're|my|our)\b[^.!?\n]{0,40}\b(?:made|lost|profits?|bag(?:s|ged)?|portfolio|position|account|calls|puts|gains?|returns?)\b|^(?:i'm|i am|we're|we are)\s+(?:up|down)\b/i;
@@ -196,12 +225,15 @@ function normalizeClaims(raw) {
     const quote = asString(row.quote);
     if (!quote) continue;
     let type = oneOf(row.type, CLAIM_TYPES) ?? "other";
-    if (type !== "prediction" && UPSIDE.test(quote)) type = "prediction";
+    if (type !== "prediction" && type !== "consensus_estimate" && UPSIDE.test(quote)) type = "prediction";
     else if (type !== "personal" && isPersonal(quote)) type = "personal";
     const percent = asNumber(row.claimedPercent);
     const direction = oneOf(row.direction, ["up", "down"]);
     const period = oneOf(row.period, ["quarter", "year"]);
     let metric = METRIC_TYPES.includes(type) ? oneOf(row.metric, METRICS) ?? (type === "earnings_result" ? "eps" : "other") : null;
+    if (type === "consensus_estimate" && metric !== "revenue" && metric !== "eps") {
+      metric = /\b(?:revenue|revenues|sales|top line)\b/i.test(quote) ? "revenue" : /\b(?:eps|earnings|per share)\b/i.test(quote) ? "eps" : "other";
+    }
     if (type === "earnings_result" && metric === "other" && EARNINGS_WORDS.test(quote) && !OTHER_MEASURE.test(quote)) metric = "eps";
     let amount = AMOUNT_TYPES.includes(type) ? asNumber(row.claimedAmount) : null;
     if (amount !== null && (metric === "net_income" || metric === "operating_income") && amount > 0 && /\bloss(es)?\b/i.test(quote)) amount = -amount;
@@ -231,10 +263,11 @@ function normalizeClaims(raw) {
       vsEstimate,
       window,
       windowDays: days !== null && days > 0 ? Math.round(days) : null,
-      session: type === "price_move" ? oneOf(row.session, SESSIONS) : null,
+      session: type === "price_move" || type === "earnings_date" ? oneOf(row.session, SESSIONS) : null,
       reference: type === "price_move" ? oneOf(row.reference, PRICE_REFERENCES) : null,
       comparison: type === "revenue_growth" || type === "earnings_result" ? oneOf(row.comparison, COMPARISONS) : null,
       segment: segment && !NOT_A_SEGMENT.test(segment) ? segment : null,
+      eventDate: type === "earnings_date" ? asString(row.eventDate)?.slice(0, 40) ?? null : null,
       postedAt: null
     });
     if (claims.length >= MAX_CLAIMS) break;
@@ -441,6 +474,8 @@ var NOT_BUILT_YET = {
   financial_figure: "Verifi can only check revenue, operating income and net income figures so far.",
   short_interest: "Verifi can't check short interest yet.",
   earnings_result: "Earnings estimates aren't connected, so this can't be checked right now.",
+  consensus_estimate: "Earnings estimates aren't connected, so this can't be checked right now.",
+  earnings_date: "The earnings calendar isn't connected, so this can't be checked right now.",
   price_move: "Market data isn't connected, so this can't be checked right now.",
   market_cap: "Market data isn't connected, so this can't be checked right now."
 };
@@ -625,6 +660,10 @@ async function checkPost(postText, deps, options = {}) {
     if (claim.type === "prediction") return cant("A prediction or price target, not a fact to verify.");
     if (claim.type === "opinion") return cant("An opinion, not a fact to verify.");
     if (claim.type === "personal") return cant("The poster's own gain or loss, not a fact about the company.");
+    if (claim.type === "consensus_estimate" && claim.metric !== "eps" && claim.metric !== "revenue") {
+      return cant("Verifi checks the consensus for revenue and earnings per share only.");
+    }
+    if (claim.type === "implied_move") return cant("An implied move comes from options prices, and Verifi doesn't have options data yet.");
     if (!claim.ticker) {
       return cant(
         claim.company ? `No stock ticker found for ${claim.company}. If it isn't publicly listed, there are no SEC filings to check this against.` : "The post doesn't say which company this is about."
@@ -654,7 +693,10 @@ async function checkPost(postText, deps, options = {}) {
     ticker: postTicker,
     tickers,
     // Some sources only know the ticker, so prefer evidence that carries a real company name.
-    entityName: tickers.length > 1 ? null : (checked.find((c) => c.evidence && c.evidence.entityName !== c.evidence.ticker) ?? checked.find((c) => c.evidence))?.evidence?.entityName ?? postCompany,
+    entityName: tickers.length > 1 ? null : (
+      // Some sources only know the ticker; a ticker is not a company name.
+      checked.find((c) => c.evidence && c.evidence.entityName !== c.evidence.ticker)?.evidence?.entityName ?? postCompany
+    ),
     claims: checked,
     summary: {
       total: checked.length,
@@ -744,7 +786,8 @@ var FIELDS = {
   session: { type: "string", enum: [...SESSIONS, "none"] },
   reference: { type: "string", enum: [...PRICE_REFERENCES, "none"] },
   comparison: { type: "string", enum: [...COMPARISONS, "none"] },
-  segment: nullable({ type: "string", description: "The business line the claim is about, if not the whole company." })
+  segment: nullable({ type: "string", description: "The business line the claim is about, if not the whole company." }),
+  eventDate: nullable({ type: "string", description: "earnings_date only: the day as the post says it." })
 };
 var CLAIMS_SCHEMA = {
   type: "object",
@@ -769,6 +812,9 @@ For each claim:
   - revenue_growth: revenue or sales changed: went up, went down, grew, fell, doubled. Only for claims about a change in revenue, never the stock price.
   - financial_figure: a dollar amount the company is said to have already reported: revenue of $11.5B, a $42B net loss, cash, debt, profit. Not earnings per share.
   - earnings_result: the company's latest earnings compared with what analysts expected, or its earnings per share: "beat earnings", "crushed estimates", "missed by 10 cents", "EPS of $1.25", "beat EPS by 20%". Vague hype about earnings ("crushed earnings") counts, as a beat.
+  - consensus_estimate: what analysts expect a report that hasn't come out yet to show: "expectations: revenue $10.3B, EPS $4.06", "consensus EPS is $1.25", "the Street expects $50B in sales". One claim per figure. A published consensus is a fact to check, not a prediction. The poster's own forecast ("they'll beat", "EPS will be $5") is a prediction.
+  - earnings_date: when the company reports earnings: "reports earnings today after close", "earnings Thursday before the open", "reports on Nov 19".
+  - implied_move: the move the options market prices in for earnings: "the implied move is 6%", "options are pricing a 9% move".
   - price_move: the stock price changed: "up 40% this week", "shares fell 12% today", "the stock doubled this year", "down 30% from its high". Only the share price, never revenue.
   - market_cap: the company's market value: "a $3T company", "market cap of $50B", "worth $200 billion".
   - short_interest: how much of the stock is sold short.
@@ -784,6 +830,7 @@ For each claim:
 - period: "quarter" if the claim is about a quarter, "year" if it is about a full year. Null if the post does not say. "Year over year" and "YoY" are a comparison, not a period: "Q3 revenue up 30% YoY" has period "quarter".
 - comparison: for revenue_growth and earnings_result. "yoy" for year over year or "vs last year"; "qoq" for quarter over quarter, "QoQ", "sequentially" or "vs last quarter". "none" if the post does not say.
 - metric:
+  - consensus_estimate: "eps" for earnings per share, "revenue" for revenue or sales, "other" for anything else.
   - financial_figure: "revenue" for revenue or sales. "operating_income" for operating income, operating profit or an operating loss. "net_income" for net income, net profit, earnings in dollars, or a net loss; never for operating income. "free_cash_flow" for free cash flow. "other" for anything else (cash, debt, spending, backlog, valuation).
   - earnings_result: what beat or missed. "eps" for earnings or earnings per share. "revenue" when revenue or sales beat or missed estimates. "guidance" when guidance or the outlook beat, missed or was raised. "free_cash_flow" for free cash flow. "other" otherwise.
   - Null for every other type.
@@ -791,16 +838,18 @@ For each claim:
 - claimedAmount: in US dollars, written out as a full number.
   - financial_figure: the amount. "$11.5B" is 11500000000. "$42 million" is 42000000. Use a negative number for a loss.
   - earnings_result: earnings per share, if stated. "EPS of $1.25" is 1.25. "a loss of 12 cents a share" is -0.12. Null if no per-share figure.
+  - consensus_estimate: the expected figure. "EPS: $4.06" is 4.06; "Revenue: $10.3B" is 10300000000.
   - market_cap: the market value. "$3T" is 3000000000000. For "$500B wiped out" or "added $200B", the change in value: 500000000000.
   - price_move: the share price, when the post states one ("trading at $182", "closed at $65.78"). Otherwise null.
   - Null for every other type.
-- fiscalYear: the year the claim's period refers to, if the post states it ("2025 revenue", "Q2 2026"). Null if not stated.
+- fiscalYear (and fiscalQuarter): for consensus_estimate and earnings_date, the quarter being reported, if the post names it. Otherwise: the year the claim's period refers to, if the post states it ("2025 revenue", "Q2 2026"). Null if not stated.
 - fiscalQuarter: 1, 2, 3 or 4 if the claim names a quarter ("Q2"). Null if not.
 - bound: "at_least" when the post states a floor ("more than doubled", "over $2 billion", "at least 40%"), "at_most" for a ceiling ("under 5%", "less than $1B"). Null when it states a figure.
 - vsEstimate: for earnings_result only. "beat" if the post says the result beat, topped or crushed expectations; "miss" if it missed or fell short; "in_line" if it met expectations. Null when the post gives growth ("EPS up 40% YoY") or only a per-share figure, and for every other type. Growth is not a beat.
 - window: for price_move and a change in market_cap, the time span of the move. "day" for today or one session. "week" for this week or the past five days. "month" for this month. "ytd" for this year or year to date. "year" for the past year, 12 months or 52 weeks. Null if the post does not say, and for every other type.
 - windowDays: for price_move and a change in market_cap, when the span is none of those windows: its length in days. "48 hours" is 2, "past 3 days" is 3, "3 years" is 1095, "since IPO" or "all time" is 36500. Otherwise null.
-- session: for price_move only. "pre_market" for a pre-market or premarket move, "after_hours" for an after-hours, extended-hours or overnight move. Otherwise "none".
+- session: for price_move, "pre_market" for a pre-market or premarket move, "after_hours" for an after-hours, extended-hours or overnight move. For earnings_date, "pre_market" when the report comes before the open, "after_hours" after the close. Otherwise "none".
+- eventDate: for earnings_date only, the day the post gives, copied as written: "today", "tomorrow", "Thursday", "Nov 19", "next week". Null if it gives none, and for every other type.
 - reference: for price_move only, when the move is measured from a high rather than over a time span: "high_52_week" for the 52-week high, "high_all_time" for the all-time high or record, "high" for "its highs" or "its peak" with no span. Otherwise "none".
 
 Do not add claims the post does not make. Do not judge whether a claim is true. If the post makes no claims, return an empty list.`;
@@ -955,7 +1004,7 @@ var REVENUE_MULTIPLE = /\b(?:revenue|revenues|sales)\b[^.!?\n]{0,40}?\b(doubled|
 var SHORT_INTEREST = /\bshort interest\b[^.!?\n]{0,60}?(\d+(?:\.\d+)?)\s?%[^.!?\n,;]*/i;
 var PREDICTION = /(?:→|->)\s*\$\d|\b\d+(?:\.\d+)?\s?%\s+upside\b|\bupside (?:of|to)\b|\b(?:must|strong) buy\b|\$\d+(?:\.\d+)?\s+(?:stock|target|price target|by)\b|\bprice target\b|\bto the moon\b|\bwill (?:hit|reach|double|triple|moon|10x)\b|\bgoing to \$\d+/i;
 var AMOUNT = "\\$(\\d+(?:\\.\\d+)?)\\s?(trillion|billion|million|bn|mn|[TBM])\\b";
-var LINK2 = "(?:\\s+(?:of|was|were|hit|reached|totaled|came in at))?\\s+";
+var LINK2 = "(?:\\s+(?:of|was|were|hit|reached|totaled|came in at)|\\s*:)?\\s+";
 var REVENUE_THEN_AMOUNT = new RegExp(`\\b(?:revenue|revenues|sales)${LINK2}${AMOUNT}`, "i");
 var AMOUNT_THEN_REVENUE = new RegExp(`${AMOUNT}\\s+(?:in|of)\\s+(?:\\w+\\s+){0,2}?(?:revenue|revenues|sales)\\b`, "i");
 var NET_THEN_AMOUNT = new RegExp(`\\bnet (loss|income|profit)${LINK2}${AMOUNT}`, "i");
@@ -987,7 +1036,12 @@ var CURRENT_PRICE = /(?:\$[A-Za-z]{1,5}|\b(?:stock|shares|it))\b[^.!?\n$]{0,20}?
 var MARKET_CAP_THEN_AMOUNT = new RegExp(`\\bmarket (?:cap|capitalization|value)\\b[^.!?\\n$]{0,20}?${AMOUNT}`, "i");
 var AMOUNT_THEN_MARKET_CAP = new RegExp(`${AMOUNT}\\s+(?:market cap|market value|company)\\b`, "i");
 var VS_ESTIMATE = /\b(beat|beats|crushed|crushes|smashed|smashes|topped|tops|blew past|blew out|missed|misses|met|meets|matched)\b[^.!?\n]{0,25}?\b(earnings|estimates|expectations|eps|consensus|the street)\b|\b(?:earnings|eps)\s+(beat|miss)\b/i;
-var EPS_AMOUNT = /\bEPS\b(?:\s+(?:of|was|came in at|at|hit))?\s+(-)?\$?(\d+(?:\.\d+)?)|(-)?\$(\d+(?:\.\d+)?)\s+(?:a|per)\s+share\b|\b(\d+)\s?cents?\s+(?:a|per)\s+share\b/i;
+var EPS_AMOUNT = /\bEPS\b(?:\s+(?:of|was|came in at|at|hit)|\s*:)?\s+(-)?\$?(\d+(?:\.\d+)?)|(-)?\$(\d+(?:\.\d+)?)\s+(?:a|per)\s+share\b|\b(\d+)\s?cents?\s+(?:a|per)\s+share\b/i;
+var ESTIMATE_CONTEXT = /\b(?:expectations?|expected|consensus|estimates? (?:are|is|of|for)|the street (?:expects|is looking for)|analysts? (?:expect|see|are looking for)|wall street expects)\b/i;
+var NOT_ESTIMATE = /\b(?:beat|beats|missed|misses|topped|crushed|came in|reported)\b/i;
+var EARNINGS_DATE = /\b(?:reports?|reporting|releases?)\s+(?:its\s+)?(?:q[1-4]\s+)?(?:earnings|results|numbers)\b[^.!?\n]{0,40}|\bearnings\s+(?:are\s+|come\s+out\s+)?(?:today|tomorrow|tonight|on\s+\w+|this week|next week|(?:mon|tues|wednes|thurs|fri)day)\b[^.!?\n]{0,30}/i;
+var EVENT_DAY = /\b(today|tonight|tomorrow|this week|next week|(?:mon|tues|wednes|thurs|fri)day|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2})\b/i;
+var IMPLIED_MOVE = /\bimplied move\b[^.!?\n%]{0,20}?(\d+(?:\.\d+)?)\s?%|\boptions (?:are )?pricing (?:in )?(?:a )?(\d+(?:\.\d+)?)\s?% move/i;
 var UNITS = { trillion: 1e12, t: 1e12, billion: 1e9, bn: 1e9, b: 1e9, million: 1e6, mn: 1e6, m: 1e6 };
 var MULTIPLES = { doubled: 100, tripled: 200, quadrupled: 300, doubling: 100, tripling: 200 };
 var DOWN = new RegExp(`^(?:${DOWN_WORDS}|drop)$`, "i");
@@ -1064,7 +1118,10 @@ function createRuleBasedExtractor() {
       const postTicker = cashtags.length === 1 ? cashtags[0] : null;
       const sentences = postText.split(/(?<=[.!?])\s+|\n+|;\s*|\s+\|\s+|\s*[•·▪]\s+/).map((s) => s.trim()).filter(Boolean);
       const claims = [];
+      let estimateLines = 0;
       for (const sentence of sentences) {
+        const before = claims.length;
+        if (ESTIMATE_CONTEXT.test(sentence) && !NOT_ESTIMATE.test(sentence)) estimateLines = 5;
         const base = { ...EMPTY_CLAIM, ticker: normalizeTicker(sentence.match(/\$([A-Za-z]{1,5})\b/)?.[1]) ?? postTicker };
         let matched = false;
         const period = periodOf(sentence);
@@ -1179,8 +1236,8 @@ function createRuleBasedExtractor() {
           const spans = [vs, eps].filter((m) => Boolean(m));
           let start = Math.min(...spans.map((m) => m.index));
           if (vs && vsMetric !== "eps") {
-            const before = sentence.slice(Math.max(0, vs.index - 12), vs.index);
-            const at = before.search(/\b(revenue|revenues|sales|top line|guidance|outlook|forecast|free cash flow|fcf)\b/i);
+            const before2 = sentence.slice(Math.max(0, vs.index - 12), vs.index);
+            const at = before2.search(/\b(revenue|revenues|sales|top line|guidance|outlook|forecast|free cash flow|fcf)\b/i);
             if (at !== -1) start = Math.min(start, Math.max(0, vs.index - 12) + at);
           }
           const end = Math.max(...spans.map((m) => m.index + m[0].length));
@@ -1206,6 +1263,26 @@ function createRuleBasedExtractor() {
         if (short) {
           claims.push({ ...base, quote: short[0].trim(), type: "short_interest", claimedPercent: Number(short[1]) });
           matched = true;
+        }
+        const implied = sentence.match(IMPLIED_MOVE);
+        if (implied) {
+          claims.push({ ...base, quote: implied[0].trim(), type: "implied_move", claimedPercent: Number(implied[1] ?? implied[2]) });
+          matched = true;
+        }
+        const reports = sentence.match(EARNINGS_DATE);
+        if (reports && (EVENT_DAY.test(reports[0]) || /\b(?:after|before)\b/i.test(reports[0]))) {
+          const span = reports[0].trim().replace(/[.!?,]+$/, "");
+          const session = /\b(?:after (?:the )?(?:close|bell|market)|after[- ]hours|amc)\b/i.test(span) ? "after_hours" : /\b(?:before (?:the )?(?:open|bell|market)|pre[- ]?market|bmo)\b/i.test(span) ? "pre_market" : null;
+          claims.push({ ...base, quote: span, type: "earnings_date", eventDate: span.match(EVENT_DAY)?.[1] ?? null, session });
+          matched = true;
+        }
+        if (estimateLines > 0) {
+          for (let i = before; i < claims.length; i++) {
+            const c = claims[i];
+            if (c.type === "financial_figure" && c.metric === "revenue") claims[i] = { ...c, type: "consensus_estimate" };
+            else if (c.type === "earnings_result" && c.claimedAmount !== null && !c.vsEstimate) claims[i] = { ...c, type: "consensus_estimate", metric: "eps" };
+          }
+          estimateLines--;
         }
         if (!matched && isPersonal(sentence)) {
           claims.push({ ...base, quote: sentence.replace(/[.!?]+$/, ""), type: "personal" });
@@ -2873,6 +2950,124 @@ function createFinnhubEarningsSource({ finnhub }) {
   };
 }
 
+// ../../packages/check-core/src/sources/finnhub/calendarSource.ts
+var CONSENSUS_TIGHT = 0.03;
+var CONSENSUS_LOOSE = 0.1;
+var CONSENSUS_EPS_CENTS = 0.02;
+var HOURS = {
+  bmo: "before the open",
+  amc: "after the close",
+  dmh: "during market hours"
+};
+var PROVIDER_NOTE = " Consensus figures differ slightly between data providers.";
+function reportWords(r, ticker) {
+  const label = r.fiscalQuarter && r.fiscalYear ? `Q${r.fiscalQuarter} ${r.fiscalYear} ` : "";
+  return `${ticker}'s ${label}report on ${formatDate(r.date)}${r.hour ? `, ${HOURS[r.hour]}` : ""}`;
+}
+function targetReport(claim, reports, base) {
+  if (claim.fiscalQuarter && claim.fiscalYear) {
+    const named = reports.find((r) => r.fiscalQuarter === claim.fiscalQuarter && r.fiscalYear === claim.fiscalYear);
+    if (named) return named;
+  }
+  return reports.find((r) => r.date >= base) ?? [...reports].reverse().find((r) => r.date >= addDays(base, -3));
+}
+function evaluateCalendarClaim(claim, evidence, today) {
+  const base = claim.postedAt ?? today;
+  const report = targetReport(claim, evidence.reports, base);
+  if (!report) {
+    return { verdict: "cant_check", reason: `No earnings report on the calendar for ${evidence.ticker} near ${formatDate(base)}.` };
+  }
+  const about = reportWords(report, evidence.ticker);
+  if (claim.type === "earnings_date") {
+    const range = claim.eventDate ? resolveEventDay(claim.eventDate, base) : null;
+    const wantHour = claim.session === "after_hours" ? "amc" : claim.session === "pre_market" ? "bmo" : null;
+    if (!range && !wantHour) return { verdict: "cant_check", reason: `The post doesn't say when ${evidence.ticker} reports. The calendar has ${about}.` };
+    const fact2 = `The earnings calendar has ${about}.`;
+    if (range && (report.date < range.from || report.date > range.to)) {
+      const said = range.from === range.to ? formatDate(range.from) : `${formatDate(range.from)} to ${formatDate(range.to)}`;
+      return { verdict: "contradicted", reason: `${fact2} The post says ${said}.` };
+    }
+    if (wantHour && report.hour && report.hour !== "dmh" && report.hour !== wantHour) {
+      return { verdict: "contradicted", reason: `${fact2} The post says ${HOURS[wantHour]}.` };
+    }
+    const unknownHour = wantHour && (!report.hour || report.hour === "dmh") ? " The calendar doesn't say whether it is before the open or after the close." : "";
+    return { verdict: "holds_up", reason: `${fact2}${unknownHour}` };
+  }
+  const eps = claim.metric === "eps";
+  const consensus = eps ? report.epsEstimate : report.revenueEstimate;
+  const claimed = claim.claimedAmount;
+  if (claimed === null) return { verdict: "cant_check", reason: "The post doesn't give a figure to compare with the consensus." };
+  if (consensus === null) {
+    return { verdict: "cant_check", reason: `The calendar has no ${eps ? "EPS" : "revenue"} consensus for ${about}.` };
+  }
+  const show = (v) => eps ? formatPerShare(v) : formatUsd(v);
+  const actual = eps ? report.epsActual : report.revenueActual;
+  const since = actual !== null ? ` The company has since reported ${show(actual)}.` : "";
+  const fact = `The analyst consensus for ${about} is ${eps ? "EPS of " : "revenue of "}${show(consensus)}.`;
+  const gap = Math.abs(claimed - consensus);
+  const tight = Math.max(Math.abs(consensus) * CONSENSUS_TIGHT, eps ? CONSENSUS_EPS_CENTS : 0);
+  const loose = Math.max(Math.abs(consensus) * CONSENSUS_LOOSE, eps ? CONSENSUS_EPS_CENTS * 2 : 0);
+  if (gap <= tight) return { verdict: "holds_up", reason: `${fact}${gap > 0 ? PROVIDER_NOTE : ""}${since}` };
+  const how = Math.abs(claimed) > Math.abs(consensus) ? "higher" : "lower";
+  if (gap <= loose) return { verdict: "misleading", reason: `Close, but ${how} than the consensus. ${fact} The post says ${show(claimed)}.${PROVIDER_NOTE}${since}` };
+  return { verdict: "contradicted", reason: `${fact} The post says ${show(claimed)}.${since}` };
+}
+function figuresFor6(reports, ticker) {
+  const rows = [];
+  for (const r of reports.slice(-2).reverse()) {
+    rows.push({ label: "Report", value: reportWords(r, ticker).replace(`${ticker}'s `, "") });
+    if (r.epsEstimate !== null) rows.push({ label: "  EPS consensus", value: formatPerShare(r.epsEstimate) });
+    if (r.revenueEstimate !== null) rows.push({ label: "  Revenue consensus", value: formatUsd(r.revenueEstimate) });
+    if (r.epsActual !== null) rows.push({ label: "  EPS reported", value: formatPerShare(r.epsActual) });
+    if (r.revenueActual !== null) rows.push({ label: "  Revenue reported", value: formatUsd(r.revenueActual) });
+  }
+  return rows;
+}
+var num3 = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+function createFinnhubCalendarSource({ finnhub, now = () => /* @__PURE__ */ new Date() }) {
+  return {
+    id: "finnhub-calendar",
+    // Dates can move and consensus figures drift until the report.
+    ttlMs: 60 * 60 * 1e3,
+    supports: (c) => c.type === "consensus_estimate" && (c.metric === "eps" || c.metric === "revenue") && c.claimedAmount !== null || c.type === "earnings_date",
+    cacheKey: (c) => `finnhub-calendar:${c.ticker ?? ""}:${c.postedAt ?? ""}`,
+    emptyReason: (c) => `No earnings reports on the calendar for ${c.ticker} around that date.`,
+    async fetchEvidence(claim) {
+      if (!claim.ticker) return null;
+      const base = claim.postedAt ?? newYorkDate(now());
+      const rows = await finnhub.earningsCalendar(claim.ticker, addDays(base, -45), addDays(base, 100));
+      const reports = rows.filter((r) => typeof r.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.date)).map((r) => ({
+        date: r.date,
+        hour: r.hour === "bmo" || r.hour === "amc" || r.hour === "dmh" ? r.hour : null,
+        fiscalYear: num3(r.year),
+        fiscalQuarter: r.quarter === 1 || r.quarter === 2 || r.quarter === 3 || r.quarter === 4 ? r.quarter : null,
+        epsEstimate: num3(r.epsEstimate),
+        revenueEstimate: num3(r.revenueEstimate),
+        epsActual: num3(r.epsActual),
+        revenueActual: num3(r.revenueActual)
+      })).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+      if (reports.length === 0) return null;
+      return {
+        kind: "earnings_calendar",
+        sourceId: "finnhub-calendar",
+        ticker: claim.ticker,
+        entityName: claim.ticker,
+        asOf: reports[reports.length - 1].date,
+        reports,
+        figures: figuresFor6(reports, claim.ticker),
+        citation: {
+          label: "Finnhub earnings calendar (dates and analyst consensus)",
+          url: `https://finance.yahoo.com/quote/${encodeURIComponent(claim.ticker)}/analysis/`
+        }
+      };
+    },
+    evaluate(claim, evidence) {
+      if (evidence.kind !== "earnings_calendar") return { verdict: "cant_check", reason: "The data found does not match this claim." };
+      return evaluateCalendarClaim(claim, evidence, newYorkDate(now()));
+    }
+  };
+}
+
 // ../../packages/check-core/src/snapshots/tickerSnapshot.ts
 var MAX_SNAPSHOT_TICKERS = 12;
 var CACHE_MS = 10 * 60 * 1e3;
@@ -2903,18 +3098,18 @@ function filingLabel2(form, items) {
 }
 var MONTHS4 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 var iso2 = (date) => date.toISOString().slice(0, 10);
-var num3 = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+var num4 = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
 function createTickerSnapshots({ sec, finnhub, now = () => /* @__PURE__ */ new Date() }) {
   const cache = /* @__PURE__ */ new Map();
   async function market(ticker) {
     if (!finnhub) return null;
     const [quote, profile] = await Promise.all([finnhub.quote(ticker), finnhub.profile(ticker)]);
     if (!quote?.c && !profile?.name) return null;
-    const cap = num3(profile?.marketCapitalization);
+    const cap = num4(profile?.marketCapitalization);
     return {
       name: profile?.name || null,
       price: quote?.c ? quote.c : null,
-      dayChangePercent: quote?.c ? num3(quote.dp) : null,
+      dayChangePercent: quote?.c ? num4(quote.dp) : null,
       priceAt: quote?.t ? new Date(quote.t * 1e3).toISOString() : null,
       marketCap: cap === null ? null : cap * 1e6
     };
@@ -2927,11 +3122,11 @@ function createTickerSnapshots({ sec, finnhub, now = () => /* @__PURE__ */ new D
       finnhub.earningsCalendar(ticker, iso2(today), iso2(new Date(today.getTime() + 100 * 864e5))).catch(() => [])
     ]);
     const next = upcoming.filter((r) => typeof r.date === "string" && r.date >= iso2(today)).sort((a, b) => a.date < b.date ? -1 : 1)[0];
-    const last = [...history].filter((r) => num3(r.actual) !== null).sort((a, b) => a.period < b.period ? 1 : -1)[0];
+    const last = [...history].filter((r) => num4(r.actual) !== null).sort((a, b) => a.period < b.period ? 1 : -1)[0];
     let lastEarnings = null;
     if (last) {
       const actual = last.actual;
-      const estimate = num3(last.estimate);
+      const estimate = num4(last.estimate);
       const diff = estimate === null ? null : actual - estimate;
       const q2 = last.quarter;
       const label = q2 >= 1 && q2 <= 4 && last.year ? `Fiscal Q${q2} ${last.year}` : `Quarter ended ${MONTHS4[Number(last.period.slice(5, 7)) - 1]} ${Number(last.period.slice(8))}, ${last.period.slice(0, 4)}`;
@@ -3121,7 +3316,7 @@ function createFinnhubFixtureFetch() {
     const body = demoFinnhub[path];
     if (body) return { ok: true, status: 200, json: async () => body };
     if (path.startsWith("/calendar/earnings") && path.includes("symbol=TGSR")) {
-      return { ok: true, status: 200, json: async () => ({ earningsCalendar: [{ date: "2026-11-12", hour: "amc", quarter: 3, year: 2026, symbol: "TGSR" }] }) };
+      return { ok: true, status: 200, json: async () => ({ earningsCalendar: [{ date: "2026-11-12", hour: "amc", quarter: 3, year: 2026, epsEstimate: -0.08, revenueEstimate: 513e5, epsActual: null, revenueActual: null, symbol: "TGSR" }] }) };
     }
     if (path.startsWith("/quote")) return { ok: true, status: 200, json: async () => ({ c: 0, d: null, dp: null, pc: 0, t: 0 }) };
     if (path.startsWith("/stock/earnings")) return { ok: true, status: 200, json: async () => [] };
@@ -3262,7 +3457,7 @@ function createSupabaseStore(env) {
 }
 
 // src/checker.ts
-var RESULT_VERSION = 7;
+var RESULT_VERSION = 8;
 var REUSE_FOR_MS = 6 * 60 * 60 * 1e3;
 var REUSE_MARKET_FOR_MS = 5 * 60 * 1e3;
 function reuseWindow(result) {
@@ -3288,7 +3483,7 @@ function createChecker({ fixtures, env }) {
   const alpaca = fixtures ? new AlpacaClient({ keyId: "demo", secretKey: "demo", fetch: createAlpacaFixtureFetch() }) : env.ALPACA_API_KEY_ID && env.ALPACA_API_SECRET_KEY ? new AlpacaClient({ keyId: env.ALPACA_API_KEY_ID, secretKey: env.ALPACA_API_SECRET_KEY }) : null;
   const demoNow = () => /* @__PURE__ */ new Date("2026-11-03T16:00:00Z");
   const sources = [createSecRevenueSource({ sec, releases }), createSecFigureSource({ sec, releases })];
-  if (finnhub) sources.push(createFinnhubEarningsSource({ finnhub }));
+  if (finnhub) sources.push(createFinnhubEarningsSource({ finnhub }), createFinnhubCalendarSource({ finnhub, now: fixtures ? demoNow : void 0 }));
   if (alpaca) {
     const now = fixtures ? demoNow : void 0;
     sources.push(createPriceHistorySource({ history: createAlpacaHistory({ alpaca, now }), finnhub, now }));

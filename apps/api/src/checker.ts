@@ -16,6 +16,7 @@ import {
   parsePostDate,
   postDateInText,
   createEarningsReleases,
+  createFinnhubCalendarSource,
   createFinnhubEarningsSource,
   createFinnhubMarketSource,
   createTickerSnapshots,
@@ -40,7 +41,8 @@ import { createSupabaseStore, hashPost, type CheckSource, type CheckStore } from
 //    personal gains, ticker lookup by name, duplicate removal, temperature 0.
 // 6: price claims from past days, from Alpaca price history.
 // 7: a date line in the post ("Nov 9th 2026") sets the post date.
-export const RESULT_VERSION = 7;
+// 8: consensus estimates and earnings dates checked against Finnhub's earnings calendar.
+export const RESULT_VERSION = 8;
 
 // A saved result is reused for the same post for this long (matches the SEC evidence cache).
 const REUSE_FOR_MS = 6 * 60 * 60 * 1000;
@@ -128,7 +130,7 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
 
   // Register new data sources here. The first source that supports a claim checks it.
   const sources: EvidenceSource[] = [createSecRevenueSource({ sec, releases }), createSecFigureSource({ sec, releases })];
-  if (finnhub) sources.push(createFinnhubEarningsSource({ finnhub }));
+  if (finnhub) sources.push(createFinnhubEarningsSource({ finnhub }), createFinnhubCalendarSource({ finnhub, now: fixtures ? demoNow : undefined }));
   // Before the live market source: it takes the claims a single current price can't answer.
   if (alpaca) {
     const now = fixtures ? demoNow : undefined;

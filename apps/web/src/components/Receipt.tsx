@@ -26,6 +26,13 @@ function describeSource(evidence: Evidence): { badge: string; heading: string; l
         link: 'View history',
         limits: "Daily prices from the post's own trading day. A post written mid-session counts as right if the price was there at some point that day.",
       };
+    case 'earnings_calendar':
+      return {
+        badge: 'CAL',
+        heading: 'EARNINGS CALENDAR',
+        link: 'View estimates',
+        limits: 'Report dates can move, and consensus figures change until the report and differ a little between data providers.',
+      };
     case 'earnings_result':
       return {
         badge: 'EPS',

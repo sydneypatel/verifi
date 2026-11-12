@@ -135,7 +135,7 @@ export function createFinnhubFixtureFetch(): FetchLike {
     const body = demoFinnhub[path];
     if (body) return { ok: true, status: 200, json: async () => body };
     if (path.startsWith('/calendar/earnings') && path.includes('symbol=TGSR')) {
-      return { ok: true, status: 200, json: async () => ({ earningsCalendar: [{ date: '2026-11-12', hour: 'amc', quarter: 3, year: 2026, symbol: 'TGSR' }] }) };
+      return { ok: true, status: 200, json: async () => ({ earningsCalendar: [{ date: '2026-11-12', hour: 'amc', quarter: 3, year: 2026, epsEstimate: -0.08, revenueEstimate: 51_300_000, epsActual: null, revenueActual: null, symbol: 'TGSR' }] }) };
     }
     if (path.startsWith('/quote')) return { ok: true, status: 200, json: async () => ({ c: 0, d: null, dp: null, pc: 0, t: 0 }) };
     if (path.startsWith('/stock/earnings')) return { ok: true, status: 200, json: async () => [] };

@@ -73,6 +73,9 @@ export const CLAIM_TYPES = [
   'short_interest',
   'corporate_event',
   'earnings_result',
+  'consensus_estimate',
+  'earnings_date',
+  'implied_move',
   'price_move',
   'market_cap',
   'prediction',
@@ -112,5 +115,6 @@ export const EMPTY_CLAIM = {
   reference: null,
   comparison: null,
   segment: null,
+  eventDate: null,
   postedAt: null,
 } as const;

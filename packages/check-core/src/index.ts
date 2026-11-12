@@ -1,6 +1,6 @@
 export * from './types';
 export { checkPost, dedupeClaims, InputError, MAX_POST_LENGTH, postTickers, sharedPostPeriod, statedPostPeriod, type CheckDeps, type CheckOptions } from './pipeline';
-export { addDays, daysBetween, newYorkDate, parsePostDate, postDateInText } from './dates';
+export { addDays, daysBetween, newYorkDate, parsePostDate, postDateInText, resolveEventDay } from './dates';
 export { MemoryCache, type EvidenceCache } from './cache';
 export {
   EMPTY_CLAIM,
@@ -37,6 +37,7 @@ export { HISTORY_START, barDate, createAlpacaHistory, type DailyBar, type Intrad
 export { createPriceHistorySource, evaluatePriceHistoryClaim, measureHistory, needsHistory } from './sources/alpaca/historySource';
 export { createFinnhubMarketSource, evaluateMarketClaim } from './sources/finnhub/marketSource';
 export { createFinnhubEarningsSource, evaluateEarningsClaim } from './sources/finnhub/earningsSource';
+export { createFinnhubCalendarSource, evaluateCalendarClaim } from './sources/finnhub/calendarSource';
 export { cleanPostText, postTimestamp } from './text';
 export { formatDate, formatUsd, formatSignedPercent, formatPerShare, formatPrice, formatTime } from './format';
 export {

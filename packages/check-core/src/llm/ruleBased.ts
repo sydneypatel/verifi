@@ -20,7 +20,7 @@ const PREDICTION = /(?:→|->)\s*\$\d|\b\d+(?:\.\d+)?\s?%\s+upside\b|\bupside (?
 
 // "$11.5B", "$42 million". Captures the number and the unit.
 const AMOUNT = '\\$(\\d+(?:\\.\\d+)?)\\s?(trillion|billion|million|bn|mn|[TBM])\\b';
-const LINK = '(?:\\s+(?:of|was|were|hit|reached|totaled|came in at))?\\s+';
+const LINK = '(?:\\s+(?:of|was|were|hit|reached|totaled|came in at)|\\s*:)?\\s+';
 const REVENUE_THEN_AMOUNT = new RegExp(`\\b(?:revenue|revenues|sales)${LINK}${AMOUNT}`, 'i');
 const AMOUNT_THEN_REVENUE = new RegExp(`${AMOUNT}\\s+(?:in|of)\\s+(?:\\w+\\s+){0,2}?(?:revenue|revenues|sales)\\b`, 'i');
 const NET_THEN_AMOUNT = new RegExp(`\\bnet (loss|income|profit)${LINK}${AMOUNT}`, 'i');
@@ -64,7 +64,15 @@ const AMOUNT_THEN_MARKET_CAP = new RegExp(`${AMOUNT}\\s+(?:market cap|market val
 // "crushed earnings", "missed estimates", "EPS of $1.25", "$0.45 a share".
 const VS_ESTIMATE =
   /\b(beat|beats|crushed|crushes|smashed|smashes|topped|tops|blew past|blew out|missed|misses|met|meets|matched)\b[^.!?\n]{0,25}?\b(earnings|estimates|expectations|eps|consensus|the street)\b|\b(?:earnings|eps)\s+(beat|miss)\b/i;
-const EPS_AMOUNT = /\bEPS\b(?:\s+(?:of|was|came in at|at|hit))?\s+(-)?\$?(\d+(?:\.\d+)?)|(-)?\$(\d+(?:\.\d+)?)\s+(?:a|per)\s+share\b|\b(\d+)\s?cents?\s+(?:a|per)\s+share\b/i;
+const EPS_AMOUNT = /\bEPS\b(?:\s+(?:of|was|came in at|at|hit)|\s*:)?\s+(-)?\$?(\d+(?:\.\d+)?)|(-)?\$(\d+(?:\.\d+)?)\s+(?:a|per)\s+share\b|\b(\d+)\s?cents?\s+(?:a|per)\s+share\b/i;
+
+// "The expectations are:", "consensus", "analysts expect": the figures that follow are the Street's, not reported.
+const ESTIMATE_CONTEXT = /\b(?:expectations?|expected|consensus|estimates? (?:are|is|of|for)|the street (?:expects|is looking for)|analysts? (?:expect|see|are looking for)|wall street expects)\b/i;
+const NOT_ESTIMATE = /\b(?:beat|beats|missed|misses|topped|crushed|came in|reported)\b/i;
+// "reports earnings today after close", "earnings Thursday before the open".
+const EARNINGS_DATE = /\b(?:reports?|reporting|releases?)\s+(?:its\s+)?(?:q[1-4]\s+)?(?:earnings|results|numbers)\b[^.!?\n]{0,40}|\bearnings\s+(?:are\s+|come\s+out\s+)?(?:today|tomorrow|tonight|on\s+\w+|this week|next week|(?:mon|tues|wednes|thurs|fri)day)\b[^.!?\n]{0,30}/i;
+const EVENT_DAY = /\b(today|tonight|tomorrow|this week|next week|(?:mon|tues|wednes|thurs|fri)day|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2})\b/i;
+const IMPLIED_MOVE = /\bimplied move\b[^.!?\n%]{0,20}?(\d+(?:\.\d+)?)\s?%|\boptions (?:are )?pricing (?:in )?(?:a )?(\d+(?:\.\d+)?)\s?% move/i;
 
 const UNITS: Record<string, number> = { trillion: 1e12, t: 1e12, billion: 1e9, bn: 1e9, b: 1e9, million: 1e6, mn: 1e6, m: 1e6 };
 const MULTIPLES: Record<string, number> = { doubled: 100, tripled: 200, quadrupled: 300, doubling: 100, tripling: 200 };
@@ -161,8 +169,12 @@ export function createRuleBasedExtractor(): ClaimExtractor {
         .filter(Boolean);
 
       const claims: ExtractedClaim[] = [];
+      // Sentences left in which figures are the Street's expectations.
+      let estimateLines = 0;
 
       for (const sentence of sentences) {
+        const before = claims.length;
+        if (ESTIMATE_CONTEXT.test(sentence) && !NOT_ESTIMATE.test(sentence)) estimateLines = 5;
         // A sentence's own cashtag wins; otherwise the post's, if it names only one.
         const base = { ...EMPTY_CLAIM, ticker: normalizeTicker(sentence.match(/\$([A-Za-z]{1,5})\b/)?.[1]) ?? postTicker };
         let matched = false;
@@ -328,6 +340,34 @@ export function createRuleBasedExtractor(): ClaimExtractor {
         if (short) {
           claims.push({ ...base, quote: short[0].trim(), type: 'short_interest', claimedPercent: Number(short[1]) });
           matched = true;
+        }
+
+        const implied = sentence.match(IMPLIED_MOVE);
+        if (implied) {
+          claims.push({ ...base, quote: implied[0].trim(), type: 'implied_move', claimedPercent: Number(implied[1] ?? implied[2]) });
+          matched = true;
+        }
+
+        const reports = sentence.match(EARNINGS_DATE);
+        if (reports && (EVENT_DAY.test(reports[0]) || /\b(?:after|before)\b/i.test(reports[0]))) {
+          const span = reports[0].trim().replace(/[.!?,]+$/, '');
+          const session = /\b(?:after (?:the )?(?:close|bell|market)|after[- ]hours|amc)\b/i.test(span)
+            ? ('after_hours' as const)
+            : /\b(?:before (?:the )?(?:open|bell|market)|pre[- ]?market|bmo)\b/i.test(span)
+              ? ('pre_market' as const)
+              : null;
+          claims.push({ ...base, quote: span, type: 'earnings_date', eventDate: span.match(EVENT_DAY)?.[1] ?? null, session });
+          matched = true;
+        }
+
+        // After "the expectations are", revenue and EPS figures are consensus estimates.
+        if (estimateLines > 0) {
+          for (let i = before; i < claims.length; i++) {
+            const c = claims[i]!;
+            if (c.type === 'financial_figure' && c.metric === 'revenue') claims[i] = { ...c, type: 'consensus_estimate' };
+            else if (c.type === 'earnings_result' && c.claimedAmount !== null && !c.vsEstimate) claims[i] = { ...c, type: 'consensus_estimate', metric: 'eps' };
+          }
+          estimateLines--;
         }
 
         if (!matched && isPersonal(sentence)) {

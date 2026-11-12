@@ -12,6 +12,8 @@ const NOT_BUILT_YET: Partial<Record<ClaimType, string>> = {
   financial_figure: 'Verifi can only check revenue, operating income and net income figures so far.',
   short_interest: "Verifi can't check short interest yet.",
   earnings_result: "Earnings estimates aren't connected, so this can't be checked right now.",
+  consensus_estimate: "Earnings estimates aren't connected, so this can't be checked right now.",
+  earnings_date: "The earnings calendar isn't connected, so this can't be checked right now.",
   price_move: "Market data isn't connected, so this can't be checked right now.",
   market_cap: "Market data isn't connected, so this can't be checked right now.",
 };
@@ -300,6 +302,10 @@ export async function checkPost(postText: string, deps: CheckDeps, options: Chec
     if (claim.type === 'prediction') return cant('A prediction or price target, not a fact to verify.');
     if (claim.type === 'opinion') return cant('An opinion, not a fact to verify.');
     if (claim.type === 'personal') return cant("The poster's own gain or loss, not a fact about the company.");
+    if (claim.type === 'consensus_estimate' && claim.metric !== 'eps' && claim.metric !== 'revenue') {
+      return cant('Verifi checks the consensus for revenue and earnings per share only.');
+    }
+    if (claim.type === 'implied_move') return cant("An implied move comes from options prices, and Verifi doesn't have options data yet.");
 
     // Without a ticker there are no filings to look up. This is the usual
     // result for private companies and for "leaked" documents.
@@ -349,8 +355,8 @@ export async function checkPost(postText: string, deps: CheckDeps, options: Chec
     entityName:
       tickers.length > 1
         ? null
-        : (checked.find((c) => c.evidence && c.evidence.entityName !== c.evidence.ticker) ?? checked.find((c) => c.evidence))?.evidence?.entityName ??
-          postCompany,
+        : // Some sources only know the ticker; a ticker is not a company name.
+          checked.find((c) => c.evidence && c.evidence.entityName !== c.evidence.ticker)?.evidence?.entityName ?? postCompany,
     claims: checked,
     summary: {
       total: checked.length,

@@ -134,3 +134,35 @@ export function postDateInText(text: string, now: Date): string | null {
   }
   return null;
 }
+
+/**
+ * The day (or days) a post means by "today", "tomorrow", "Thursday", "Nov 19",
+ * "this week" or "next week", counted from the post's date. Unlike a post date,
+ * this can be in the future: "reports Thursday" means the coming Thursday.
+ */
+export function resolveEventDay(text: string, base: string): { from: string; to: string } | null {
+  const t = text.trim().toLowerCase().replace(/^on\s+/, '');
+  const one = (d: string) => ({ from: d, to: d });
+  if (t === 'today' || t === 'tonight') return one(base);
+  if (t === 'tomorrow') return one(addDays(base, 1));
+  const monday = addDays(base, -((weekdayOf(base) + 6) % 7));
+  if (t === 'this week') return { from: monday, to: addDays(monday, 4) };
+  if (t === 'next week') return { from: addDays(monday, 7), to: addDays(monday, 11) };
+  const wd = t.match(/^(?:this |next )?([a-z]{3})[a-z]*$/);
+  if (wd && WEEKDAYS.includes(wd[1]!)) {
+    const ahead = (WEEKDAYS.indexOf(wd[1]!) - weekdayOf(base) + 7) % 7;
+    return one(addDays(base, ahead + (t.startsWith('next ') && ahead === 0 ? 7 : 0)));
+  }
+  const md = t.match(/^([a-z]{3,9})\.? (\d{1,2})(?:st|nd|rd|th)?(?:,? (\d{4}))?$/);
+  if (md) {
+    const month = MONTHS[md[1]!.slice(0, 3)];
+    if (!month) return null;
+    const year = md[3] ? Number(md[3]) : Number(base.slice(0, 4));
+    let day = validDate(year, month, Number(md[2]));
+    // "Jan 8" in a December post is next January.
+    if (day && !md[3] && daysBetween(base, day) < -60) day = validDate(year + 1, month, Number(md[2]));
+    return day ? one(day) : null;
+  }
+  const iso = parsePostDate(t, new Date(`${base}T12:00:00Z`));
+  return iso && /\d/.test(t) ? one(iso) : null;
+}
