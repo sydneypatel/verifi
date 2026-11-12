@@ -44,7 +44,7 @@ const PANEL: Record<string, string> = {
   holds_up: 'border-holds-bar/30 bg-holds-soft/50',
   misleading: 'border-mislead-bar/30 bg-mislead-soft/60',
   contradicted: 'border-contra-bar/30 bg-contra-soft/50',
-  cant_check: 'border-line bg-white',
+  cant_check: 'border-line bg-surface',
 };
 
 export function Receipt({ result, index, onBack, onNext }: ReceiptProps) {
@@ -74,9 +74,9 @@ export function Receipt({ result, index, onBack, onNext }: ReceiptProps) {
         </section>
 
         {evidence && (
-          <section className="flex flex-col gap-3 rounded-2xl border border-line bg-white p-3.5">
+          <section className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-3.5">
             <div className="flex items-center gap-2.5">
-              <span className="flex h-10 w-9 shrink-0 items-center justify-center rounded-md bg-navy text-[10px] font-extrabold text-white">
+              <span className="flex h-10 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-[10px] font-extrabold text-white">
                 {source!.badge}
               </span>
               <span className="flex min-w-0 flex-1 flex-col">
@@ -116,7 +116,7 @@ export function Receipt({ result, index, onBack, onNext }: ReceiptProps) {
           <button
             type="button"
             onClick={isLast ? onBack : onNext}
-            className="flex h-12 cursor-pointer items-center justify-center rounded-xl bg-navy text-[15px] font-bold text-white"
+            className="flex h-12 cursor-pointer items-center justify-center rounded-xl bg-primary text-[15px] font-bold text-white"
           >
             {isLast ? 'Back to the post' : `Next claim (${VERDICTS[result.claims[index + 1]!.verdict].label})`}
           </button>

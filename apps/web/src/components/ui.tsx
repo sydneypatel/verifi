@@ -1,5 +1,6 @@
 import type { Verdict } from '@verifi/check-core';
 import type { ReactNode } from 'react';
+import { setTheme, useTheme } from '../theme';
 
 export const VERDICTS: Record<
   Verdict,
@@ -59,7 +60,7 @@ export function VerdictBadge({ verdict, size = 'md', inline = false }: { verdict
 /** Small numbered tag tying a highlight in the post to its claim card. */
 export function ClaimNumber({ n }: { n: number }) {
   return (
-    <span className="ml-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded bg-navy px-1 align-[2px] text-[11px] font-bold text-white no-underline">
+    <span className="ml-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded bg-primary px-1 align-[2px] text-[11px] font-bold text-white no-underline">
       {n}
     </span>
   );
@@ -77,7 +78,7 @@ export function Logo({ size = 28 }: { size?: number }) {
 
 export function TopBar({ left, center, right }: { left?: ReactNode; center?: ReactNode; right?: ReactNode }) {
   return (
-    <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center justify-between gap-2 border-b border-line bg-white px-2">
+    <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center justify-between gap-2 border-b border-line bg-surface px-2">
       <div className="flex min-w-11 items-center">{left}</div>
       <div className="flex min-w-0 flex-col items-center text-center">{center}</div>
       <div className="flex min-w-11 items-center justify-end">{right}</div>
@@ -156,7 +157,7 @@ export function TabBar({ active, onSelect }: { active: Tab; onSelect: (tab: Tab)
   return (
     <nav
       aria-label="Main"
-      className="sticky bottom-0 z-10 flex shrink-0 border-t border-line bg-white px-3"
+      className="sticky bottom-0 z-10 flex shrink-0 border-t border-line bg-surface px-3"
       style={{ height: `calc(60px + ${TAB_BAR_INSET})`, paddingBottom: TAB_BAR_INSET }}
     >
       {TABS.map((tab) => {
@@ -180,5 +181,31 @@ export function TabBar({ active, onSelect }: { active: Tab; onSelect: (tab: Tab)
         );
       })}
     </nav>
+  );
+}
+
+/** Switches between light and dark. Shows the theme it will switch to. */
+export function ThemeToggle() {
+  const theme = useTheme();
+  const next = theme === 'dark' ? 'light' : 'dark';
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(next)}
+      aria-label={`Switch to ${next} mode`}
+      title={`Switch to ${next} mode`}
+      className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full text-navy"
+    >
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {next === 'dark' ? (
+          <path d="M16.5 12.2A7 7 0 017.8 3.5a7 7 0 108.7 8.7z" />
+        ) : (
+          <>
+            <circle cx="10" cy="10" r="3.5" />
+            <path d="M10 1.8v1.8M10 16.4v1.8M1.8 10h1.8M16.4 10h1.8M4.2 4.2l1.3 1.3M14.5 14.5l1.3 1.3M4.2 15.8l1.3-1.3M14.5 5.5l1.3-1.3" />
+          </>
+        )}
+      </svg>
+    </button>
   );
 }

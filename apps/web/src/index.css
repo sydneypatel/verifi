@@ -1,11 +1,18 @@
 @import 'tailwindcss';
 
+/* `dark:` follows the resolved theme on <html data-theme>, set in index.html and theme.ts. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
 /* Palette A: deep blue, slate, off-white, teal accent. */
 @theme {
   --font-sans: 'Inter', system-ui, sans-serif;
 
   --color-ink: #0f172a;
   --color-navy: #1e3a5f;
+  /* Filled buttons, chips and cards that carry white text. Same as navy in light mode. */
+  --color-primary: #1e3a5f;
+  /* Cards, inputs, top bar and tab bar. */
+  --color-surface: #ffffff;
   --color-ground: #f8fafc;
   --color-line: #e2e8f0;
   --color-dash: #cbd5e1;
@@ -37,6 +44,39 @@
   --color-unknown-soft: #f1f5f9;
   --color-unknown-bar: #94a3b8;
   --color-unknown-on-navy: #94a3b8;
+}
+
+/* Dark palette: same token names, so every utility class follows along.
+   Bars and on-navy colors already sit on strong or dark fills and stay as they are. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-ink: #f1f5f9;
+  --color-navy: #c3d5ee;
+  --color-primary: #2b5080;
+  --color-surface: #131c2e;
+  --color-ground: #0b1220;
+  --color-line: #233047;
+  --color-dash: #3a4a63;
+  --color-muted: #94a3b8;
+  --color-body: #b8c4d4;
+  --color-strong: #dbe3ee;
+
+  --color-teal: #2dd4bf;
+  --color-teal-dark: #2dd4bf;
+  --color-teal-deep: #7ff0dd;
+  --color-teal-soft: #134e4a;
+  --color-mint: #0f2e2c;
+
+  --color-holds: #4ade80;
+  --color-holds-soft: #0f3320;
+  --color-mislead: #fbbf24;
+  --color-mislead-soft: #3a2a08;
+  --color-contra: #fca5a5;
+  --color-contra-soft: #3f1515;
+  --color-unknown: #b8c4d4;
+  --color-unknown-soft: #1e293b;
+  --color-unknown-bar: #64748b;
 }
 
 html,

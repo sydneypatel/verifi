@@ -97,7 +97,7 @@ export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }
           }}
         >
           <div className="flex gap-2">
-            <div className="flex h-[46px] flex-1 items-center gap-2 rounded-xl border border-dash bg-white px-3">
+            <div className="flex h-[46px] flex-1 items-center gap-2 rounded-xl border border-dash bg-surface px-3">
               <span className="text-[15px] font-bold text-unknown-bar">$</span>
               <label htmlFor="ticker-add" className="sr-only">
                 Add a ticker
@@ -111,7 +111,7 @@ export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }
                 className="flex-1 bg-transparent text-[15px] text-ink uppercase outline-none placeholder:normal-case placeholder:text-muted"
               />
             </div>
-            <button type="submit" className="h-[46px] w-[76px] cursor-pointer rounded-xl bg-navy text-sm font-bold text-white">
+            <button type="submit" className="h-[46px] w-[76px] cursor-pointer rounded-xl bg-primary text-sm font-bold text-white">
               Follow
             </button>
           </div>
@@ -128,10 +128,10 @@ export function Tickers({ entries, followed, onFollow, onUnfollow, onOpenClaim }
           <div key={row.ticker} className="flex flex-col gap-2">
           {i === 0 && following.length > 0 && <h2 className="pt-1 text-xs font-bold tracking-wider text-muted">FOLLOWING</h2>}
           {i === following.length && others.length > 0 && <h2 className="pt-2 text-xs font-bold tracking-wider text-muted">FROM POSTS YOU'VE CHECKED</h2>}
-          <section className={`flex flex-col gap-3 rounded-2xl bg-white p-3.5 ${row.checks.length ? 'border-2 border-navy' : 'border border-line'}`}>
+          <section className={`flex flex-col gap-3 rounded-2xl bg-surface p-3.5 ${row.checks.length ? 'border-2 border-navy' : 'border border-line'}`}>
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2.5">
-                <span className={`flex h-10 min-w-10 items-center justify-center rounded-lg px-1 text-xs font-extrabold ${row.checks.length ? 'bg-navy text-white' : 'bg-line text-navy'}`}>
+                <span className={`flex h-10 min-w-10 items-center justify-center rounded-lg px-1 text-xs font-extrabold ${row.checks.length ? 'bg-primary text-white' : 'bg-line text-navy'}`}>
                   {row.ticker}
                 </span>
                 <span className="flex min-w-0 flex-col">

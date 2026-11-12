@@ -27,8 +27,8 @@ function SignedIn({ email, onSignOut }: { email: string; onSignOut: () => void }
   const [confirming, setConfirming] = useState(false);
   return (
     <>
-      <section className="flex items-center gap-3 rounded-2xl border border-line bg-white p-4">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-navy text-lg font-bold text-white" aria-hidden="true">
+      <section className="flex items-center gap-3 rounded-2xl border border-line bg-surface p-4">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-bold text-white" aria-hidden="true">
           {email[0]?.toUpperCase()}
         </span>
         <span className="flex min-w-0 flex-col">
@@ -52,7 +52,7 @@ function SignedIn({ email, onSignOut }: { email: string; onSignOut: () => void }
             <p className="text-center text-[13px] leading-normal text-body">
               This removes your history and tickers from this device. They stay in your account.
             </p>
-            <button type="button" onClick={onSignOut} className="h-12 cursor-pointer rounded-xl bg-navy text-base font-bold text-white">
+            <button type="button" onClick={onSignOut} className="h-12 cursor-pointer rounded-xl bg-primary text-base font-bold text-white">
               Sign out
             </button>
             <button type="button" onClick={() => setConfirming(false)} className="h-11 cursor-pointer text-sm font-semibold text-body">
@@ -63,7 +63,7 @@ function SignedIn({ email, onSignOut }: { email: string; onSignOut: () => void }
           <button
             type="button"
             onClick={() => setConfirming(true)}
-            className="h-12 cursor-pointer rounded-xl border border-dash bg-white text-base font-semibold text-navy"
+            className="h-12 cursor-pointer rounded-xl border border-dash bg-surface text-base font-semibold text-navy"
           >
             Sign out
           </button>
@@ -158,13 +158,13 @@ function SignIn() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            className="h-12 rounded-xl border border-dash bg-white px-3 text-base text-ink placeholder:text-muted"
+            className="h-12 rounded-xl border border-dash bg-surface px-3 text-base text-ink placeholder:text-muted"
           />
           {errorBox}
           <button
             type="submit"
             disabled={busy || !email.trim()}
-            className="h-12 cursor-pointer rounded-xl bg-navy text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            className="h-12 cursor-pointer rounded-xl bg-primary text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {busy ? 'Sending…' : 'Email me a code'}
           </button>
@@ -202,13 +202,13 @@ function SignIn() {
           value={code}
           onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
           placeholder="123456"
-          className="h-14 rounded-xl border border-dash bg-white px-3 text-center text-2xl font-bold tracking-[0.3em] text-ink placeholder:font-normal placeholder:tracking-[0.3em] placeholder:text-dash"
+          className="h-14 rounded-xl border border-dash bg-surface px-3 text-center text-2xl font-bold tracking-[0.3em] text-ink placeholder:font-normal placeholder:tracking-[0.3em] placeholder:text-dash"
         />
         {errorBox}
         <button
           type="submit"
           disabled={busy || code.length < 6}
-          className="h-12 cursor-pointer rounded-xl bg-navy text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          className="h-12 cursor-pointer rounded-xl bg-primary text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           {busy ? 'Signing in…' : 'Sign in'}
         </button>

@@ -92,7 +92,7 @@ export function History({ entries, email, onOpenAccount, onOpen, onDelete, onRes
 
       <div className="flex flex-1 flex-col gap-3.5 px-4 pt-4 pb-4">
         {!email && (
-          <section className="flex flex-col gap-3 rounded-2xl bg-navy p-4 text-white">
+          <section className="flex flex-col gap-3 rounded-2xl bg-primary p-4 text-white">
             <div className="flex items-start gap-2.5">
               <svg width="22" height="22" viewBox="0 0 22 22" fill="none" className="mt-px shrink-0" aria-hidden="true">
                 <rect x="3" y="5" width="16" height="11" rx="2" className="stroke-teal-on-navy" strokeWidth="1.8" />
@@ -108,7 +108,7 @@ export function History({ entries, email, onOpenAccount, onOpen, onDelete, onRes
             <button
               type="button"
               onClick={onOpenAccount}
-              className="flex h-11 cursor-pointer items-center justify-center rounded-xl bg-white text-sm font-bold text-navy"
+              className="flex h-11 cursor-pointer items-center justify-center rounded-xl bg-surface text-sm font-bold text-navy"
             >
               Sign in with email
             </button>
@@ -116,10 +116,10 @@ export function History({ entries, email, onOpenAccount, onOpen, onDelete, onRes
         )}
 
         {entries.length > 0 && (
-          <div className="flex h-11 items-center gap-2 rounded-xl border border-dash bg-white px-3">
-            <svg width="18" height="18" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-              <circle cx="10" cy="10" r="6.5" stroke="#64748B" strokeWidth="1.8" />
-              <path d="M15 15l4 4" stroke="#64748B" strokeWidth="1.8" strokeLinecap="round" />
+          <div className="flex h-11 items-center gap-2 rounded-xl border border-dash bg-surface px-3">
+            <svg width="18" height="18" viewBox="0 0 22 22" fill="none" className="shrink-0 text-muted" aria-hidden="true">
+              <circle cx="10" cy="10" r="6.5" stroke="currentColor" strokeWidth="1.8" />
+              <path d="M15 15l4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
             </svg>
             <label htmlFor="hist-search" className="sr-only">
               Search your checks
@@ -150,7 +150,7 @@ export function History({ entries, email, onOpenAccount, onOpen, onDelete, onRes
                 <button
                   type="button"
                   onClick={() => onOpen(e.id)}
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-2xl border border-line bg-white p-3.5 text-left"
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-2xl border border-line bg-surface p-3.5 text-left"
                 >
                   <span className="flex min-w-0 flex-1 flex-col gap-2">
                     {/* Right padding leaves room for the delete button. */}
@@ -189,7 +189,7 @@ export function History({ entries, email, onOpenAccount, onOpen, onDelete, onRes
 
         {entries.length > 0 &&
           (confirmClear ? (
-            <div className="mt-2 flex flex-col items-center gap-2 rounded-2xl border border-line bg-white p-3.5">
+            <div className="mt-2 flex flex-col items-center gap-2 rounded-2xl border border-line bg-surface p-3.5">
               <p className="text-center text-sm text-body">
                 {email ? 'Delete all your checks from your account and every device?' : 'Delete all checks on this device?'}
               </p>
@@ -203,7 +203,7 @@ export function History({ entries, email, onOpenAccount, onOpen, onDelete, onRes
                     onClear();
                     setConfirmClear(false);
                   }}
-                  className="min-h-11 cursor-pointer rounded-lg bg-contra px-4 text-sm font-bold text-white"
+                  className="min-h-11 cursor-pointer rounded-lg bg-contra-bar px-4 text-sm font-bold text-white"
                 >
                   Delete all
                 </button>
@@ -218,7 +218,7 @@ export function History({ entries, email, onOpenAccount, onOpen, onDelete, onRes
 
       {removed && (
         // Sits just above the tab bar.
-        <div role="status" className="sticky bottom-[84px] z-20 mx-4 mb-3 flex items-center justify-between gap-3 rounded-xl bg-navy py-2 pr-2 pl-4 text-sm text-white shadow-lg">
+        <div role="status" className="sticky bottom-[84px] z-20 mx-4 mb-3 flex items-center justify-between gap-3 rounded-xl bg-primary py-2 pr-2 pl-4 text-sm text-white shadow-lg">
           <span>Check deleted</span>
           <button type="button" onClick={undo} className="min-h-11 cursor-pointer rounded-lg px-3 font-bold text-teal-on-navy">
             Undo

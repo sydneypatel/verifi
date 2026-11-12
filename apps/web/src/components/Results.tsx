@@ -40,7 +40,7 @@ export function Results({ text, result, onBack, onOpenClaim }: ResultsProps) {
       />
 
       <div className="flex flex-1 flex-col gap-3 px-4 pt-4 pb-4">
-        <section aria-labelledby="post-heading" className="flex flex-col gap-2 rounded-2xl border border-line bg-white p-4">
+        <section aria-labelledby="post-heading" className="flex flex-col gap-2 rounded-2xl border border-line bg-surface p-4">
           <h2 id="post-heading" className="text-xs font-bold tracking-wider text-muted">
             THE POST
           </h2>
@@ -64,7 +64,7 @@ export function Results({ text, result, onBack, onOpenClaim }: ResultsProps) {
           </p>
         </section>
 
-        <section className="flex flex-col gap-2.5 rounded-2xl bg-navy p-4 text-white">
+        <section className="flex flex-col gap-2.5 rounded-2xl bg-primary p-4 text-white">
           <h2 className="text-xl leading-tight font-bold tracking-tight">
             <span className="text-teal-on-navy">{lead}</span> {rest}
           </h2>
@@ -83,11 +83,11 @@ export function Results({ text, result, onBack, onOpenClaim }: ResultsProps) {
               <button
                 type="button"
                 onClick={() => onOpenClaim(index)}
-                className="flex w-full cursor-pointer items-center gap-2.5 rounded-2xl border border-line bg-white py-3 pr-2.5 pl-3.5 text-left"
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-2xl border border-line bg-surface py-3 pr-2.5 pl-3.5 text-left"
               >
                 <span className="flex min-w-0 flex-1 flex-col gap-1.5">
                   <span className="flex items-center gap-2">
-                    <span className="flex h-5 min-w-5 items-center justify-center rounded bg-navy px-1 text-[11px] font-bold text-white">{index + 1}</span>
+                    <span className="flex h-5 min-w-5 items-center justify-center rounded bg-primary px-1 text-[11px] font-bold text-white">{index + 1}</span>
                     <VerdictBadge verdict={c.verdict} />
                     {multi && c.claim.ticker && (
                       <span className="ml-auto rounded bg-line px-1.5 py-0.5 text-[11px] font-extrabold tracking-wide text-navy">{c.claim.ticker}</span>

@@ -1,6 +1,6 @@
 import { useRef, useState, type DragEvent } from 'react';
 import type { Mode } from '../api';
-import { Disclaimer, Logo, TopBar } from './ui';
+import { Disclaimer, Logo, ThemeToggle, TopBar } from './ui';
 
 // The live examples use Apple's filings as of October 2026. The demo example
 // uses the made-up company served in demo mode.
@@ -95,26 +95,29 @@ export function Home({ text, onTextChange, onScreenshot, reading, fromScreenshot
           </span>
         }
         right={
-          email ? (
-            <button
-              type="button"
-              onClick={onOpenAccount}
-              aria-label={`Account: ${email}`}
-              className="mr-2 flex h-11 w-11 cursor-pointer items-center justify-center"
-            >
-              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-navy text-[15px] font-bold text-white">
-                {email[0]?.toUpperCase()}
-              </span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onOpenAccount}
-              className="mr-2 h-9 cursor-pointer rounded-full bg-navy px-3.5 text-sm font-semibold text-white"
-            >
-              Sign in
-            </button>
-          )
+          <>
+            <ThemeToggle />
+            {email ? (
+              <button
+                type="button"
+                onClick={onOpenAccount}
+                aria-label={`Account: ${email}`}
+                className="mr-2 flex h-11 w-11 cursor-pointer items-center justify-center"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-[15px] font-bold text-white">
+                  {email[0]?.toUpperCase()}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onOpenAccount}
+                className="mr-2 h-9 cursor-pointer rounded-full bg-primary px-3.5 text-sm font-semibold text-white"
+              >
+                Sign in
+              </button>
+            )}
+          </>
         }
       />
 
@@ -135,7 +138,7 @@ export function Home({ text, onTextChange, onScreenshot, reading, fromScreenshot
 
         <form
           {...drop}
-          className={`flex flex-col gap-3 rounded-2xl border bg-white p-3.5 shadow-sm ${dragging ? 'border-teal-dark ring-2 ring-teal-soft' : 'border-line'}`}
+          className={`flex flex-col gap-3 rounded-2xl border bg-surface p-3.5 shadow-sm ${dragging ? 'border-teal-dark ring-2 ring-teal-soft' : 'border-line'}`}
           onSubmit={(event) => {
             event.preventDefault();
             onSubmit();
@@ -203,7 +206,7 @@ export function Home({ text, onTextChange, onScreenshot, reading, fromScreenshot
             type="button"
             disabled={busy}
             onClick={() => fileInput.current?.click()}
-            className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dash bg-white text-[15px] font-semibold text-navy disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dash bg-surface text-[15px] font-semibold text-navy disabled:cursor-not-allowed disabled:opacity-60"
           >
             <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="2.5" y="3.5" width="15" height="13" rx="2" />
@@ -220,7 +223,7 @@ export function Home({ text, onTextChange, onScreenshot, reading, fromScreenshot
           <button
             type="submit"
             disabled={busy || !text.trim()}
-            className="flex h-[50px] cursor-pointer items-center justify-center gap-2 rounded-xl bg-navy text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex h-[50px] cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? 'Checking the filings…' : 'Check claims'}
           </button>
@@ -244,7 +247,7 @@ export function Home({ text, onTextChange, onScreenshot, reading, fromScreenshot
 
         <div className="mt-auto flex gap-2.5 pt-2">
           {PILLARS.map((p) => (
-            <div key={p.label} className="flex flex-1 flex-col gap-1.5 rounded-xl border border-line bg-white p-3">
+            <div key={p.label} className="flex flex-1 flex-col gap-1.5 rounded-xl border border-line bg-surface p-3">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="text-navy" aria-hidden="true">
                 {p.icon}
               </svg>
