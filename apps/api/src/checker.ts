@@ -1,4 +1,7 @@
 import {
+  AlpacaClient,
+  createAlpacaHistory,
+  createPriceHistorySource,
   FinnhubClient,
   MemoryCache,
   SecClient,
@@ -22,7 +25,7 @@ import {
   type CheckResult,
   type EvidenceSource,
 } from '@verifi/check-core';
-import { createFinnhubFixtureFetch, createFixtureFetch } from '@verifi/check-core/fixtures';
+import { createAlpacaFixtureFetch, createFinnhubFixtureFetch, createFixtureFetch } from '@verifi/check-core/fixtures';
 import { createSupabaseStore, hashPost, type CheckSource, type CheckStore } from './store';
 
 // Bump this whenever verdict logic or a data source changes, so saved results
@@ -32,7 +35,8 @@ import { createSupabaseStore, hashPost, type CheckSource, type CheckStore } from
 // 5: post dates, segment claims, named growth bases and quarters, "not filed yet", total revenue,
 //    10% price tolerance, 52-week highs, EPS-only beats, operating income, market-value changes,
 //    personal gains, ticker lookup by name, duplicate removal, temperature 0.
-export const RESULT_VERSION = 5;
+// 6: price claims from past days, from Alpaca price history.
+export const RESULT_VERSION = 6;
 
 // A saved result is reused for the same post for this long (matches the SEC evidence cache).
 const REUSE_FOR_MS = 6 * 60 * 60 * 1000;
@@ -40,7 +44,9 @@ const REUSE_FOR_MS = 6 * 60 * 60 * 1000;
 const REUSE_MARKET_FOR_MS = 5 * 60 * 1000;
 
 function reuseWindow(result: CheckResult): number {
-  return result.claims.some((c) => c.evidence?.kind === 'market') ? REUSE_MARKET_FOR_MS : REUSE_FOR_MS;
+  // A past session never changes; today's can.
+  const live = result.claims.some((c) => c.evidence?.kind === 'market' || (c.evidence?.kind === 'price_history' && !c.evidence.settled));
+  return live ? REUSE_MARKET_FOR_MS : REUSE_FOR_MS;
 }
 
 export interface CheckerOptions {
@@ -106,9 +112,24 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
       ? new FinnhubClient({ apiKey: env.FINNHUB_API_KEY })
       : null;
 
+  // Alpaca (free plan): daily and intraday prices since 2016, for price claims from past days. Optional.
+  const alpaca = fixtures
+    ? new AlpacaClient({ keyId: 'demo', secretKey: 'demo', fetch: createAlpacaFixtureFetch() })
+    : env.ALPACA_API_KEY_ID && env.ALPACA_API_SECRET_KEY
+      ? new AlpacaClient({ keyId: env.ALPACA_API_KEY_ID, secretKey: env.ALPACA_API_SECRET_KEY })
+      : null;
+  // Demo prices are dated Nov 3, 2026, so the demo's "today" is that day.
+  const demoNow = () => new Date('2026-11-03T16:00:00Z');
+
   // Register new data sources here. The first source that supports a claim checks it.
   const sources: EvidenceSource[] = [createSecRevenueSource({ sec, releases }), createSecFigureSource({ sec, releases })];
-  if (finnhub) sources.push(createFinnhubEarningsSource({ finnhub }), createFinnhubMarketSource({ finnhub }));
+  if (finnhub) sources.push(createFinnhubEarningsSource({ finnhub }));
+  // Before the live market source: it takes the claims a single current price can't answer.
+  if (alpaca) {
+    const now = fixtures ? demoNow : undefined;
+    sources.push(createPriceHistorySource({ history: createAlpacaHistory({ alpaca, now }), finnhub, now }));
+  }
+  if (finnhub) sources.push(createFinnhubMarketSource({ finnhub }));
 
   // The SEC ticker list also finds tickers for companies a post names without one.
   const deps: CheckDeps = { extractor, sources, cache: new MemoryCache(), directory: sec };
@@ -190,6 +211,7 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
         `data: ${fixtures ? 'demo fixtures' : 'live SEC'}`,
         `earnings releases: ${releases ? 'on' : 'off'}`,
         `market data: ${finnhub ? (fixtures ? 'demo fixtures' : 'Finnhub') : 'off (set FINNHUB_API_KEY)'}`,
+        `price history: ${alpaca ? (fixtures ? 'demo fixtures' : 'Alpaca') : 'off (set ALPACA_API_KEY_ID and ALPACA_API_SECRET_KEY)'}`,
         `screenshots: ${screenshots ? 'on' : 'off'}`,
         `saving: ${store ? 'Supabase' : 'off'}`,
       ].join(', '),

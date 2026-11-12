@@ -200,9 +200,43 @@ export interface MarketEvidence extends EvidenceBase {
   high52Week?: { price: number; date: string | null } | null;
 }
 
+/** A day's close, from price history. */
+export interface PricePoint {
+  date: string;
+  price: number;
+}
+
+/**
+ * A price measured on the post's own day from daily (and intraday) history,
+ * not the price at the time of the check.
+ */
+export interface PriceHistoryEvidence extends EvidenceBase {
+  kind: 'price_history';
+  /** The trading day the post is about: the last session on or before its date. */
+  sessionDate: string;
+  /** True when the post could have been written during that session, so any price in the day's range counts. */
+  intraday: boolean;
+  /** False when that session is today's, so the numbers can still change. */
+  settled: boolean;
+  /** The first day on record. */
+  firstDate: string;
+  /** The close and the day's range on the session. */
+  session: { open: number; high: number; low: number; close: number };
+  /** The move over the claim's span, from the close before it to the session. */
+  move?: { label: string; from: PricePoint; to: PricePoint; percent: number; lowPercent: number; highPercent: number };
+  /** The highest price on record before the session. scope "52_week", or "history" (since firstDate). */
+  high?: { price: number; date: string; scope: '52_week' | 'history'; complete: boolean };
+  /** A pre-market or after-hours move. */
+  extended?: { kind: Session; base: PricePoint; last: PricePoint; percent: number; lowPercent: number; highPercent: number };
+  /** Market value on the session, estimated from today's value and the price change since. */
+  marketCap?: number;
+  /** Why the claim's span or reference can't be measured from the history. */
+  unavailable?: string;
+}
+
 // Add new evidence kinds to this union as adapters are added
 // (short interest, insider trades, ...).
-export type Evidence = RevenueEvidence | FigureEvidence | EarningsEvidence | MarketEvidence;
+export type Evidence = RevenueEvidence | FigureEvidence | EarningsEvidence | MarketEvidence | PriceHistoryEvidence;
 
 export interface CheckedClaim {
   claim: Claim;

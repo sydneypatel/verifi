@@ -42,10 +42,10 @@ const METRIC_FIELD: Partial<Record<PriceWindow, string>> = {
  */
 const MAX_LAG_DAYS: Record<PriceWindow | 'price' | 'high', number> = { day: 0, week: 0, price: 0, high: 1, month: 1, ytd: 3, year: 3 };
 
-const STALE_NOTE = ' Prices move all day, so the post may have been right when it was written.';
+export const STALE_NOTE = ' Prices move all day, so the post may have been right when it was written.';
 
 /** Within the margin of the claimed figure. */
-const agrees = (claimed: number, actual: number, margin = PRICE_TOLERANCE) =>
+export const agrees = (claimed: number, actual: number, margin = PRICE_TOLERANCE) =>
   Math.abs(claimed - actual) <= Math.max(Math.abs(claimed) * margin, PRICE_MIN_POINTS);
 
 function moveText(evidence: MarketEvidence, w: PriceWindow): string {
@@ -53,7 +53,7 @@ function moveText(evidence: MarketEvidence, w: PriceWindow): string {
 }
 
 /** Spans in days that one of the data's windows covers. */
-function windowForDays(days: number): PriceWindow | null {
+export function windowForDays(days: number): PriceWindow | null {
   if (days === 1) return 'day';
   if (days === 5 || days === 7) return 'week';
   if (days >= 360 && days <= 366) return 'year';

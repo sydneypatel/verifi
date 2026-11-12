@@ -32,6 +32,9 @@ export {
   type EarningsReleases,
 } from './sources/sec/releases';
 export { FinnhubClient } from './sources/finnhub/client';
+export { AlpacaClient, type AlpacaBar, type AlpacaFeed } from './sources/alpaca/client';
+export { HISTORY_START, barDate, createAlpacaHistory, type DailyBar, type IntradayBar, type PriceHistory } from './sources/alpaca/history';
+export { createPriceHistorySource, evaluatePriceHistoryClaim, measureHistory, needsHistory } from './sources/alpaca/historySource';
 export { createFinnhubMarketSource, evaluateMarketClaim } from './sources/finnhub/marketSource';
 export { createFinnhubEarningsSource, evaluateEarningsClaim } from './sources/finnhub/earningsSource';
 export { cleanPostText, postTimestamp } from './text';

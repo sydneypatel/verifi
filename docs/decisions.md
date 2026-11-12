@@ -141,11 +141,15 @@ A screenshot gets the post's text without scraping any platform: the person brin
   debt and spending come back as "can't be checked". Earnings per share and market value are
   checked through Finnhub when it is connected.
 - **Old posts and prices.** "Today" and "this week" mean the post's day (`postedAt`, or the
-  date in a copied X author block). Finnhub's free tier has no price history, so a move
-  "today" or "this week" is checked only when the post is from the same trading day as the
-  price data (a day or three of slack for month, year-to-date and 52-week spans); otherwise
-  it comes back as "can't be checked". Pre-market and after-hours moves, spans other than
-  1 day, 5 days, month, YTD and 52 weeks, and moves from an all-time high are not checked.
+  date in a copied X author block). With Alpaca keys set, price claims from past days are
+  measured on the post's own trading day from Alpaca's free price history (daily bars since
+  2016, split-adjusted): any span in days or years, "this week" as the calendar week, highs,
+  "since IPO", and pre-market and after-hours moves from 5-minute bars. A post written during
+  the session counts as right if the price reached the claimed level at some point that day.
+  Limits: history starts in 2016, so all-time highs and "since IPO" are checked only for
+  companies first traded after that; the free plan serves nothing newer than 15 minutes; and
+  extended-hours checks need the feed to carry those trades. Without Alpaca keys, Finnhub's
+  latest price is used and claims from earlier sessions come back as "can't be checked".
 - **EPS growth.** "EPS up 40% YoY" is kept apart from a beat and comes back as "can't be
   checked"; only beats, misses and per-share figures are checked against Finnhub.
 - **Short interest.** Still not checked: Finnhub's short-interest data is not on the free tier.

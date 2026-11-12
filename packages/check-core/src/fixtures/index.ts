@@ -142,3 +142,76 @@ export function createFinnhubFixtureFetch(): FetchLike {
     return { ok: true, status: 200, json: async () => ({}) };
   };
 }
+
+// Price history for the demo company, in the shape Alpaca returns. Made up, but
+// it agrees with the Finnhub fixture: $18.42 on Nov 3, 2026, a 52-week high of
+// $26.31 on Feb 11, 2026, and $16.48 a week before Nov 3.
+const DEMO_ANCHORS: Array<[string, number]> = [
+  ['2023-04-14', 9.8], // first trading day: the demo company is newer than the history
+  ['2024-06-03', 15.2],
+  ['2025-11-03', 23.6],
+  ['2026-02-11', 26.0],
+  ['2026-06-01', 21.4],
+  ['2026-10-27', 16.48],
+  ['2026-10-30', 17.2],
+  ['2026-11-02', 17.81],
+  ['2026-11-03', 18.42],
+];
+
+/** Weekday closes between the anchors, with a small deterministic wiggle. */
+export function demoDailyBars(): Array<{ t: string; o: number; h: number; l: number; c: number; v: number }> {
+  const out: Array<{ t: string; o: number; h: number; l: number; c: number; v: number }> = [];
+  const day = 86_400_000;
+  const round = (n: number) => Math.round(n * 100) / 100;
+  let prev = DEMO_ANCHORS[0]![1];
+  for (let a = 0; a < DEMO_ANCHORS.length - 1; a++) {
+    const [fromDate, fromPrice] = DEMO_ANCHORS[a]!;
+    const [toDate, toPrice] = DEMO_ANCHORS[a + 1]!;
+    const from = Date.parse(`${fromDate}T00:00:00Z`);
+    const to = Date.parse(`${toDate}T00:00:00Z`);
+    for (let t = from; t < to || (a === DEMO_ANCHORS.length - 2 && t === to); t += day) {
+      const weekday = new Date(t).getUTCDay();
+      if (weekday === 0 || weekday === 6) continue;
+      const share = (t - from) / (to - from || 1);
+      const date = new Date(t).toISOString().slice(0, 10);
+      const anchor = DEMO_ANCHORS.find(([d]) => d === date);
+      const c = anchor ? anchor[1] : round(fromPrice + (toPrice - fromPrice) * share + Math.sin(t / day / 3) * 0.25);
+      const o = round(prev);
+      // Feb 11, 2026 sets the 52-week high of $26.31.
+      const h = date === '2026-02-11' ? 26.31 : round(Math.min(Math.max(o, c) * 1.012, 26.2));
+      const l = round(Math.min(o, c) * 0.988);
+      // Alpaca stamps a daily bar at midnight New York.
+      out.push({ t: `${date}T05:00:00Z`, o, h, l, c, v: 1_000_000 });
+      prev = c;
+    }
+  }
+  return out;
+}
+
+/** Nov 3, 2026: pre-market trades up to $18.90; Nov 2: after-hours trades down to $17.30. */
+const DEMO_INTRADAY: Record<string, Array<{ t: string; o: number; h: number; l: number; c: number; v: number }>> = {
+  '2026-11-03': [
+    { t: '2026-11-03T12:00:00Z', o: 17.9, h: 18.1, l: 17.85, c: 18.05, v: 2000 }, // 7:00 AM ET
+    { t: '2026-11-03T14:25:00Z', o: 18.6, h: 18.9, l: 18.55, c: 18.88, v: 4000 }, // 9:25 AM ET
+    { t: '2026-11-03T14:30:00Z', o: 18.88, h: 18.95, l: 18.3, c: 18.4, v: 90000 }, // the open
+  ],
+  '2026-11-02': [
+    { t: '2026-11-02T20:55:00Z', o: 17.7, h: 17.85, l: 17.7, c: 17.81, v: 90000 }, // 3:55 PM ET
+    { t: '2026-11-02T22:30:00Z', o: 17.6, h: 17.62, l: 17.25, c: 17.3, v: 3000 }, // 5:30 PM ET
+  ],
+};
+
+/** A stand-in for fetch that serves Alpaca bars for the demo company. Other symbols get no bars. */
+export function createAlpacaFixtureFetch(): FetchLike {
+  const daily = demoDailyBars();
+  return async (url) => {
+    const u = new URL(url);
+    const symbol = decodeURIComponent(u.pathname.split('/')[3] ?? '');
+    const timeframe = u.searchParams.get('timeframe');
+    const start = u.searchParams.get('start') ?? '';
+    const end = u.searchParams.get('end') ?? '9999';
+    if (symbol !== 'TGSR') return { ok: true, status: 200, json: async () => ({ bars: [], symbol, next_page_token: null }) };
+    const bars = timeframe === '1Day' ? daily.filter((b) => b.t >= start && b.t <= end) : (DEMO_INTRADAY[start.slice(0, 10)] ?? []).filter((b) => b.t <= end);
+    return { ok: true, status: 200, json: async () => ({ bars, symbol, next_page_token: null }) };
+  };
+}

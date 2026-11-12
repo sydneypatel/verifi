@@ -19,6 +19,13 @@ function describeSource(evidence: Evidence): { badge: string; heading: string; l
         link: 'View quote',
         limits: 'Prices move all day. This compares the post with the price when you checked, not when the post was written.',
       };
+    case 'price_history':
+      return {
+        badge: 'MKT',
+        heading: 'PRICE HISTORY',
+        link: 'View history',
+        limits: "Daily prices from the post's own trading day. A post written mid-session counts as right if the price was there at some point that day.",
+      };
     case 'earnings_result':
       return {
         badge: 'EPS',
@@ -28,7 +35,12 @@ function describeSource(evidence: Evidence): { badge: string; heading: string; l
       };
     default: {
       const form = evidence.citation.label.match(/Form ([^,\s]+)/)?.[1] ?? 'SEC';
-      const metric = evidence.kind === 'financial_figure' && evidence.metric === 'net_income' ? 'NET INCOME' : 'REVENUE';
+      const metric =
+        evidence.kind === 'financial_figure' && evidence.metric === 'net_income'
+          ? 'NET INCOME'
+          : evidence.kind === 'financial_figure' && evidence.metric === 'operating_income'
+            ? 'OPERATING INCOME'
+            : 'REVENUE';
       const release = form === '8-K';
       return {
         badge: form,
