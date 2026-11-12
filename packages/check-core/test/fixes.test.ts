@@ -21,6 +21,7 @@ import {
   namesMatch,
   normalizeClaims,
   parsePostDate,
+  postDateInText,
   postTickers,
   sharedPostPeriod,
   summarizeRevenue,
@@ -87,6 +88,34 @@ describe('1. the post date', () => {
     expect(parsePostDate('2026-11-10T02:00:00Z', NOW)).toBe('2026-11-09');
     expect(parsePostDate('soon', NOW)).toBeNull();
     expect(parsePostDate('Feb 30', NOW)).toBeNull();
+  });
+
+  it('reads more date formats', () => {
+    expect(parsePostDate('11/9/2026', NOW)).toBe('2026-11-09');
+    expect(parsePostDate('11/9/26', NOW)).toBe('2026-11-09');
+    expect(parsePostDate('Nov 9th 2026', NOW)).toBe('2026-11-09');
+    expect(parsePostDate('5 hr. ago', NOW)).toBe('2026-11-12');
+  });
+
+  it('finds a line in the post that is only its date', () => {
+    expect(postDateInText('$BRIA up 16.67% today.\n\nNov 9th 2026', NOW)).toBe('2026-11-09');
+    expect(postDateInText('10:32 AM · Nov 9, 2026 · 12.3K Views\n$BRIA up 16.67% today', NOW)).toBe('2026-11-09');
+    expect(postDateInText('Posted: 11/9/2026\n$BRIA up 16.67% today', NOW)).toBe('2026-11-09');
+    // A date inside a claim, or a loose relative word, is not the post date.
+    expect(postDateInText('Revenue for the quarter ended Sep 30, 2026 was $5B', NOW)).toBeNull();
+    expect(postDateInText('$BRIA up 16.67% today\nMonday', NOW)).toBeNull();
+    expect(postDateInText('$BRIA up 16.67% today', NOW)).toBeNull();
+  });
+
+  it('uses a date line in the post when no date is given (the BRIA post)', async () => {
+    const post = '+108% upside: $TGSR $1.32 to $2.75. $TGSR up 3.4% today. Single analyst. Target, not a promise.\n\nNov 3rd 2026';
+    const r = await checkPost(post, deps());
+    expect(r.postedAt).toBe('2026-11-03');
+    const today = r.claims.find((c) => c.claim.type === 'price_move')!;
+    expect(today.claim.postedAt).toBe('2026-11-03');
+    expect(today.verdict).toBe('holds_up');
+    // A date given with the check wins over the one in the text.
+    expect((await checkPost(post, deps(), { postedAt: '2026-11-02' })).postedAt).toBe('2026-11-02');
   });
 
   it('puts the post date on every claim and in the result', async () => {

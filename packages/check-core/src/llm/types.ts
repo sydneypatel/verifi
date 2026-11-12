@@ -54,6 +54,8 @@ export interface ScreenshotReading {
   text: string;
   /** Where the post seems to be from ("X", "Reddit"), if it can tell. */
   platform: string | null;
+  /** When the post was made, as the screenshot shows it ("17h", "Nov 9, 2026"), or null. */
+  postedAt: string | null;
 }
 
 /**

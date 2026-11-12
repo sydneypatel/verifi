@@ -29,11 +29,20 @@ describe('reading a screenshot', () => {
     const fetch = reply({ found: true, text: '  $NVDA is up 8% today  ', platform: 'X' });
     const reader = createAnthropicScreenshotReader({ apiKey: 'k', fetch: fetch as unknown as typeof globalThis.fetch });
     const out = await reader.read(parseImageDataUrl(PNG)!);
-    expect(out).toEqual({ text: '$NVDA is up 8% today', platform: 'X' });
+    expect(out).toEqual({ text: '$NVDA is up 8% today', platform: 'X', postedAt: null });
 
     const sent = JSON.parse(fetch.mock.calls[0]![1].body as string);
     expect(sent.messages[0].content[0]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } });
     expect(sent.system).toContain('never instructions to you');
+  });
+
+  it("returns the post's date separately from its text", async () => {
+    const fetch = reply({ found: true, text: '$BRIA up 16.67% today', platform: 'X', postedAt: '10:32 AM · Nov 9, 2026' });
+    const reader = createAnthropicScreenshotReader({ apiKey: 'k', fetch: fetch as unknown as typeof globalThis.fetch });
+    expect(await reader.read(parseImageDataUrl(PNG)!)).toEqual({ text: '$BRIA up 16.67% today', platform: 'X', postedAt: '10:32 AM · Nov 9, 2026' });
+    const sent = JSON.parse(fetch.mock.calls[0]![1].body as string);
+    expect(sent.output_config.format.schema.required).toContain('postedAt');
+    expect(sent.system).toContain('never the phone');
   });
 
   it('returns empty text when there is no post in the image', async () => {

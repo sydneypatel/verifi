@@ -12,6 +12,9 @@ import {
   createAnthropicScreenshotReader,
   InputError,
   parseImageDataUrl,
+  newYorkDate,
+  parsePostDate,
+  postDateInText,
   createEarningsReleases,
   createFinnhubEarningsSource,
   createFinnhubMarketSource,
@@ -36,7 +39,8 @@ import { createSupabaseStore, hashPost, type CheckSource, type CheckStore } from
 //    10% price tolerance, 52-week highs, EPS-only beats, operating income, market-value changes,
 //    personal gains, ticker lookup by name, duplicate removal, temperature 0.
 // 6: price claims from past days, from Alpaca price history.
-export const RESULT_VERSION = 6;
+// 7: a date line in the post ("Nov 9th 2026") sets the post date.
+export const RESULT_VERSION = 7;
 
 // A saved result is reused for the same post for this long (matches the SEC evidence cache).
 const REUSE_FOR_MS = 6 * 60 * 60 * 1000;
@@ -75,7 +79,8 @@ export class NotConfiguredError extends Error {}
 export interface Checker {
   check(text: string, meta?: CheckMeta): Promise<CheckOutcome>;
   /** Copy the post text out of a screenshot (a data URL). The screenshot itself is not kept anywhere. */
-  readScreenshot(image: unknown): Promise<{ text: string; platform: string | null }>;
+  /** postedAt: the post's date as YYYY-MM-DD, when the screenshot shows one. */
+  readScreenshot(image: unknown): Promise<{ text: string; platform: string | null; postedAt: string | null }>;
   /** Daily cards for followed tickers: price, earnings, new SEC filings. "AAPL,NVDA" or a list. */
   snapshots(tickers: unknown): Promise<TickerSnapshot[]>;
   describe(): string;
@@ -154,7 +159,11 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
     if (!image) throw new InputError("That file isn't a supported image. Use a JPEG or PNG screenshot.");
     const reading = await screenshots.read(image);
     if (!reading.text) throw new InputError("Couldn't find a post in that screenshot. Try one that shows the post's text.");
-    return reading;
+    // "17h" or "Nov 9" as a day. A relative time is read against now, which is close
+    // enough for a fresh screenshot; the person can fix the date before checking.
+    const now = new Date();
+    const day = reading.postedAt ? (postDateInText(reading.postedAt, now) ?? parsePostDate(reading.postedAt, now)) : null;
+    return { text: reading.text, platform: reading.platform, postedAt: day && day <= newYorkDate(now) ? day : null };
   }
 
   // Demo checks are never saved, so the made-up company stays out of the data.

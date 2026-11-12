@@ -1,5 +1,5 @@
 import type { EvidenceCache } from './cache';
-import { newYorkDate, parsePostDate } from './dates';
+import { newYorkDate, parsePostDate, postDateInText } from './dates';
 import type { ClaimExtractor } from './llm/types';
 import { normalizeTicker } from './llm/normalize';
 import { namesMatch } from './sources/sec/client';
@@ -40,7 +40,7 @@ export interface CheckOptions {
    * When the post was written: a Date, an ISO date, or what the app shows
    * ("Nov 9", "2d ago", "Monday"). "Today" and "this week" in the post are
    * read against this day. Without it, the date in a copied X author block is
-   * used, if there is one.
+   * used, or a line in the post that is only a date ("Nov 9th 2026").
    */
   postedAt?: string | Date | null;
 }
@@ -229,8 +229,9 @@ function resolvePostedAt(raw: string, options: CheckOptions, now: Date): string 
     day = parsePostDate(given, now);
     if (!day) throw new InputError(`Couldn't read the post date "${given.trim().slice(0, 40)}". Use a date like Nov 9 or 2026-11-09, or leave it blank.`);
   } else {
+    // The X author block, then a line in the post that is only its date ("Nov 9th 2026").
     const stamp = postTimestamp(raw);
-    day = stamp ? parsePostDate(stamp, now) : null;
+    day = (stamp ? parsePostDate(stamp, now) : null) ?? postDateInText(raw.replace(/\r\n?/g, '\n'), now);
   }
   if (day && day > newYorkDate(now)) throw new InputError("The post's date is in the future.");
   return day;

@@ -26,8 +26,11 @@ export async function getMode(): Promise<Mode | null> {
 /** Where the post text came from, for the check log. */
 export type PostSource = 'paste' | 'screenshot';
 
-/** Copy the post text out of a screenshot. Nothing is checked or saved yet; the screenshot is not kept. */
-export async function readScreenshot(image: string): Promise<string> {
+/**
+ * Copy the post text out of a screenshot, and the post's date (YYYY-MM-DD) if it shows one.
+ * Nothing is checked or saved yet; the screenshot is not kept.
+ */
+export async function readScreenshot(image: string): Promise<{ text: string; postedAt: string | null }> {
   let res: Response;
   try {
     res = await fetch(`${BASE}/api/check`, {
@@ -38,14 +41,15 @@ export async function readScreenshot(image: string): Promise<string> {
   } catch {
     throw new Error("Can't reach Verifi. Check your connection and try again.");
   }
-  const data = (await res.json().catch(() => null)) as { text?: unknown; error?: string } | null;
+  const data = (await res.json().catch(() => null)) as { text?: unknown; postedAt?: unknown; error?: string } | null;
   if (!res.ok || typeof data?.text !== 'string') {
     throw new Error(data?.error ?? "The screenshot couldn't be read. Try again, or paste the text.");
   }
-  return data.text;
+  const postedAt = typeof data.postedAt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.postedAt) ? data.postedAt : null;
+  return { text: data.text, postedAt };
 }
 
-/** postedAt: when the post was written ("Nov 9", "2d ago"), so "today" in it is read against that day. */
+/** postedAt: when the post was written (YYYY-MM-DD, or "Nov 9", "2d ago"), so "today" in it is read against that day. */
 export async function checkPost(text: string, source: PostSource = 'paste', postedAt?: string): Promise<CheckResponse> {
   let res: Response;
   try {

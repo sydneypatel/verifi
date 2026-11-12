@@ -60,6 +60,10 @@ export function parsePostDate(input: string, now: Date): string | null {
   const today = newYorkDate(now);
 
   // ISO: a calendar day is taken as written; a timestamp is converted to New York.
+  // "11/9/2026", "11/09/26": US order, as US apps print it.
+  const us = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (us) return validDate(us[3]!.length === 2 ? 2000 + Number(us[3]) : Number(us[3]), Number(us[1]), Number(us[2]));
+
   const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (iso) return validDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   if (/^\d{4}-\d{2}-\d{2}t/.test(text)) {
@@ -71,7 +75,7 @@ export function parsePostDate(input: string, now: Date): string | null {
   if (text === 'yesterday') return addDays(today, -1);
 
   // "2d", "17h ago", "3 days ago"
-  const rel = text.match(/^(\d+)\s?([a-z]+)(?: ago)?$/);
+  const rel = text.replace(/\./g, '').match(/^(\d+)\s?([a-z]+)(?: ago)?$/);
   if (rel && UNIT_MS[rel[2]!]) return newYorkDate(new Date(now.getTime() - Number(rel[1]) * UNIT_MS[rel[2]!]!));
 
   // "Monday", "last Mon": the latest such day, today included unless "last" is said.
@@ -97,6 +101,36 @@ export function parsePostDate(input: string, now: Date): string | null {
     const candidate = validDate(thisYear, month, Number(dayNum));
     if (!candidate) return null;
     return candidate > today ? validDate(thisYear - 1, month, Number(dayNum)) : candidate;
+  }
+  return null;
+}
+
+// Parts of a date line that aren't the date: "10:32 AM", "12.3K Views", "Edited".
+const DATE_LINE_NOISE = /^(?:\d{1,2}:\d{2}(?::\d{2})?\s?(?:am|pm)?(?:\s?[a-z]{2,4})?|\d+(?:[.,]\d+)?[km]?\s+views?|edited|posted(?: on)?|sent|from \w+)$/i;
+
+/**
+ * A line in the post that is only its date: "Nov 9th 2026", "Posted Nov 9, 2026",
+ * "10:32 AM · Nov 9, 2026 · 12.3K Views" (X), "11/9/2026". Only the first and last
+ * few lines are read, and only lines that are a date and nothing else, so a date
+ * inside a claim ("revenue for the quarter ended Sep 30, 2026") is never taken.
+ * Returns the New York day, or null.
+ */
+export function postDateInText(text: string, now: Date): string | null {
+  const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const candidates = [...lines.slice(-3).reverse(), ...lines.slice(0, 3)];
+  for (const line of candidates) {
+    if (line.length > 80) continue;
+    const parts = line
+      .replace(/^posted(?: on)?:?\s+/i, '')
+      .split(/\s+[·•|]\s+|\s+-\s+/)
+      .map((p) => p.trim().replace(/[.,]$/, ''))
+      .filter(Boolean);
+    const dates = parts.map((p) => parsePostDate(p, now));
+    const found = dates.findIndex(Boolean);
+    if (found === -1) continue;
+    // Relative words ("2d", "Monday") alone on a line are too loose to trust; written-out dates are not.
+    if (!/\d{4}|[a-z]{3,9}\.? \d{1,2}|\d{1,2}\/\d{1,2}/i.test(parts[found]!)) continue;
+    if (parts.every((p, i) => i === found || DATE_LINE_NOISE.test(p))) return dates[found]!;
   }
   return null;
 }

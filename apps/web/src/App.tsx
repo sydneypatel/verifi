@@ -64,6 +64,8 @@ export function App() {
   // Set while a screenshot is being read, and after, until the text is cleared.
   const [reading, setReading] = useState(false);
   const [fromScreenshot, setFromScreenshot] = useState(false);
+  // When the post was written (YYYY-MM-DD), or '' for unknown.
+  const [postedAt, setPostedAt] = useState('');
   const [mode, setMode] = useState<Mode | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const [followed, setFollowed] = useState<string[]>(loadFollowed);
@@ -135,8 +137,11 @@ export function App() {
 
   function changeText(next: string) {
     setText(next);
-    // Edits keep the screenshot tag (fixing a misread is the point); clearing drops it.
-    if (!next.trim()) setFromScreenshot(false);
+    // Edits keep the screenshot tag (fixing a misread is the point); clearing drops it, and the date with it.
+    if (!next.trim()) {
+      setFromScreenshot(false);
+      setPostedAt('');
+    }
   }
 
   async function readScreenshotFile(file: Blob) {
@@ -145,8 +150,9 @@ export function App() {
     setError(null);
     try {
       const image = await shrinkImage(file);
-      const postText = await readScreenshot(image);
-      setText(postText);
+      const reading = await readScreenshot(image);
+      setText(reading.text);
+      setPostedAt(reading.postedAt ?? '');
       setFromScreenshot(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "The screenshot couldn't be read.");
@@ -161,7 +167,7 @@ export function App() {
     setError(null);
     try {
       const cleaned = cleanPostText(text);
-      const { result, postHash } = await checkPost(cleaned, fromScreenshot ? 'screenshot' : 'paste');
+      const { result, postHash } = await checkPost(cleaned, fromScreenshot ? 'screenshot' : 'paste', postedAt || undefined);
       const entry = newEntry(cleaned, result, postHash);
       setHistory((h) => [entry, ...h]);
       setView({ name: 'results', entryId: entry.id, from: 'check' });
@@ -273,6 +279,8 @@ export function App() {
         onScreenshot={readScreenshotFile}
         reading={reading}
         fromScreenshot={fromScreenshot}
+        postedAt={postedAt}
+        onPostedAtChange={setPostedAt}
         onSubmit={submit}
         email={email}
         onOpenAccount={openAccount}
