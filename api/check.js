@@ -3461,7 +3461,7 @@ function createSupabaseStore(env) {
 }
 
 // src/checker.ts
-var RESULT_VERSION = 8;
+var RESULT_VERSION = 9;
 var REUSE_FOR_MS = 6 * 60 * 60 * 1e3;
 var REUSE_MARKET_FOR_MS = 5 * 60 * 1e3;
 function reuseWindow(result) {
