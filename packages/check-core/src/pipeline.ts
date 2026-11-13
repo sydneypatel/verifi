@@ -1,5 +1,5 @@
 import type { EvidenceCache } from './cache';
-import { addDays, newYorkDate, parsePostDate, postDateInText, redditAge, weekdayOf } from './dates';
+import { addDays, newYorkDate, parsePostDate, parsePostTime, postDateInText, postStampInText, redditAge, weekdayOf } from './dates';
 import type { ClaimExtractor } from './llm/types';
 import { normalizeTicker } from './llm/normalize';
 import { STALE_NOTE } from './sources/finnhub/marketSource';
@@ -302,23 +302,36 @@ function namesInQuote(name: string, quote: string): boolean {
   return Boolean(word && new RegExp(`\\b${word}`, 'i').test(quote));
 }
 
-/** The post's date as a New York day, or null. Throws InputError for a date that can't be read or is in the future. */
-function resolvePostedAt(raw: string, options: CheckOptions, now: Date): string | null {
+/**
+ * The post's date as a New York day, and the exact moment it was made when that is
+ * known. Throws InputError for a date that can't be read or is in the future.
+ */
+function resolvePostedAt(raw: string, options: CheckOptions, now: Date): { day: string | null; time: string | null } {
   let day: string | null = null;
+  let time: string | null = null;
   const given = options.postedAt;
   if (given instanceof Date) {
     if (Number.isNaN(given.getTime())) throw new InputError("Couldn't read the post's date.");
     day = newYorkDate(given);
+    time = given.toISOString();
   } else if (typeof given === 'string' && given.trim()) {
-    day = parsePostDate(given, now);
+    time = parsePostTime(given, now);
+    day = time ? newYorkDate(new Date(time)) : (parsePostDate(given, now) ?? postDateInText(given, now));
     if (!day) throw new InputError(`Couldn't read the post date "${given.trim().slice(0, 40)}". Use a date like Nov 9 or 2026-11-09, or leave it blank.`);
   } else {
-    // The X author block, then a line in the post that is only its date ("Nov 9th 2026").
+    // The X author block, then a line in the post that is only its date ("Nov 9th 2026", "8:06 PM · Nov 11, 2026").
     const stamp = postTimestamp(raw);
-    day = (stamp ? parsePostDate(stamp, now) : null) ?? postDateInText(raw.replace(/\r\n?/g, '\n'), now);
+    time = stamp ? parsePostTime(stamp, now) : null;
+    day = time ? newYorkDate(new Date(time)) : stamp ? parsePostDate(stamp, now) : null;
+    if (!day) {
+      const line = postStampInText(raw.replace(/\r\n?/g, '\n'), now);
+      day = line?.day ?? null;
+      time = line?.time ?? null;
+    }
   }
   if (day && day > newYorkDate(now)) throw new InputError("The post's date is in the future.");
-  return day;
+  if (time && Date.parse(time) > now.getTime()) throw new InputError("The post's time is in the future.");
+  return { day, time };
 }
 
 /**
@@ -335,7 +348,7 @@ export async function checkPost(postText: string, deps: CheckDeps, options: Chec
     throw new InputError(`That post is too long. The limit is ${MAX_POST_LENGTH} characters.`);
   }
   const now = deps.now?.() ?? new Date();
-  const postedAt = resolvePostedAt(postText, options, now);
+  const { day: postedAt, time: postedTime } = resolvePostedAt(postText, options, now);
   // A date from Reddit's rounded "13d ago" can be a day late: the session it points at is a guess.
   const approxDate = !options.postedAt && !postTimestamp(postText) && Boolean(redditAge(postText.replace(/\r\n?/g, '\n'), now)?.approximate);
 
@@ -355,7 +368,8 @@ export async function checkPost(postText: string, deps: CheckDeps, options: Chec
     const id = `c${i + 1}`;
     // "Monday's closes: AMD +13%": a one-day move on the session the post names.
     const dayMove = (c.type === 'price_move' || c.type === 'market_cap') && c.window === 'day' && !c.session;
-    const claim: Claim = { ...c, id, postedAt: dayMove && sessionDay ? sessionDay : postedAt };
+    const named = dayMove && sessionDay && sessionDay !== postedAt;
+    const claim: Claim = { ...c, id, postedAt: named ? sessionDay : postedAt, postedTime: named ? null : postedTime };
     if (postPeriod && borrowsPeriod(c, postPeriod)) {
       borrowed.add(id);
       claim.fiscalYear = postPeriod.fiscalYear;
@@ -472,6 +486,7 @@ export async function checkPost(postText: string, deps: CheckDeps, options: Chec
     },
     extractor: deps.extractor.name,
     postedAt,
+    postedTime,
     checkedAt: now.toISOString(),
   };
 }

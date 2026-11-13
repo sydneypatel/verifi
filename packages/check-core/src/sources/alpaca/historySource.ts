@@ -13,10 +13,16 @@ import { HISTORY_START, type DailyBar, type IntradayBar, type PriceHistory } fro
 
 const PRE_OPEN = 9 * 60 + 30;
 const CLOSE = 16 * 60;
+const BAR_MS = 5 * 60_000;
+// "Closed at", "closed down 7% this week", "at the close": the regular close, whatever the post's time.
+const CLOSE_WORDS = /\bclos(?:e|ed|es|ing)\b/i;
+
+const clockFormat = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
+const clockOf = (iso: string) => clockFormat.format(new Date(iso));
 
 /** True when a claim can't be checked against the latest price alone. */
 export function needsHistory(claim: Claim, today: string): boolean {
-  return Boolean(claim.postedAt && claim.postedAt < today) || claim.windowDays !== null || claim.reference !== null || claim.session !== null;
+  return Boolean(claim.postedAt && claim.postedAt < today) || claim.postedTime !== null || claim.windowDays !== null || claim.reference !== null || claim.session !== null;
 }
 
 function weekStart(date: string): string {
@@ -120,6 +126,21 @@ export function measureHistory(
     };
   }
   const e = bars[end]!;
+  // The trades before the post was made, on its session: the last one is the price the post saw.
+  const postTime = claim.postedTime ? Date.parse(claim.postedTime) : null;
+  const seen = postTime === null ? [] : (options.intraday ?? []).filter((b) => b.date === e.date && Date.parse(b.time) + BAR_MS <= postTime);
+  const last = seen[seen.length - 1];
+  const postPrice: PriceHistoryEvidence['postPrice'] =
+    last && !CLOSE_WORDS.test(claim.quote)
+      ? {
+          price: last.close,
+          time: new Date(Date.parse(last.time) + BAR_MS).toISOString(),
+          session: last.minute < PRE_OPEN ? 'pre_market' : last.minute >= CLOSE ? 'after_hours' : 'regular',
+          low: Math.min(...seen.map((b) => b.low)),
+          high: Math.max(...seen.map((b) => b.high)),
+        }
+      : undefined;
+  const endPrice = postPrice?.price ?? e.close;
   const evidence: PriceHistoryEvidence = {
     ...base,
     asOf: e.date,
@@ -129,15 +150,19 @@ export function measureHistory(
     settled: e.date < options.today,
     session: { open: e.open, high: e.high, low: e.low, close: e.close },
   };
-  if (options.marketCap && latest.close > 0) evidence.marketCap = options.marketCap * (e.close / latest.close);
+  if (postPrice) evidence.postPrice = postPrice;
+  if (options.marketCap && latest.close > 0) evidence.marketCap = options.marketCap * (endPrice / latest.close);
 
   if (claim.type === 'price_move' && claim.session) {
     const day = options.intraday ?? [];
     const pre = claim.session === 'pre_market';
-    const trades = day.filter((b) => (pre ? b.minute < PRE_OPEN : b.minute >= CLOSE));
+    const trades = day.filter((b) => (pre ? b.minute < PRE_OPEN : b.minute >= CLOSE) && (postTime === null || Date.parse(b.time) + BAR_MS <= postTime));
     const from = pre ? bars[end - 1] : e;
     if (trades.length === 0 || !from) {
-      evidence.unavailable = `The price data has no ${pre ? 'pre-market' : 'after-hours'} trades for ${ticker} on ${formatDate(e.date)}.`;
+      const later = postTime !== null && day.some((b) => (pre ? b.minute < PRE_OPEN : b.minute >= CLOSE));
+      evidence.unavailable = later
+        ? `The post was made at ${clockOf(claim.postedTime!)} ET on ${formatDate(e.date)}, before any ${pre ? 'pre-market' : 'after-hours'} trades for ${ticker} that day.`
+        : `The price data has no ${pre ? 'pre-market' : 'after-hours'} trades for ${ticker} on ${formatDate(e.date)}.`;
     } else {
       const last = trades[trades.length - 1]!;
       evidence.extended = {
@@ -180,10 +205,10 @@ export function measureHistory(
       evidence.move = {
         label: span.label,
         from: span.from,
-        to: { date: e.date, price: e.close },
-        percent: pct(e.close, span.from.price),
-        lowPercent: pct(e.low, span.from.price),
-        highPercent: pct(e.high, span.from.price),
+        to: { date: e.date, price: endPrice },
+        percent: pct(endPrice, span.from.price),
+        lowPercent: pct(postPrice?.low ?? e.low, span.from.price),
+        highPercent: pct(postPrice?.high ?? e.high, span.from.price),
       };
     }
   }
@@ -204,6 +229,10 @@ function figuresFor(e: PriceHistoryEvidence): EvidenceFigure[] {
   if (e.extended) {
     rows.push({ label: `${e.extended.kind === 'pre_market' ? 'Pre-market' : 'After-hours'}, last trade`, value: formatPrice(e.extended.last.price) });
   }
+  if (e.postPrice) {
+    const kind = e.postPrice.session === 'after_hours' ? 'After hours' : e.postPrice.session === 'pre_market' ? 'Pre-market' : 'Price';
+    rows.push({ label: `${kind}, ${clockOf(e.postPrice.time)} ET (last trade before the post)`, value: formatPrice(e.postPrice.price) });
+  }
   if (e.marketCap) rows.push({ label: 'Market value (est.)', value: formatUsd(e.marketCap) });
   return rows;
 }
@@ -215,6 +244,20 @@ function within(claimed: number, low: number, high: number): boolean {
 
 /** "closed at $X on Nov 3", or "was at $X on Nov 3" while that session is still trading. */
 const closed = (e: PriceHistoryEvidence) => (e.settled ? 'closed at' : 'was at');
+
+/** "the after-hours price of $158.78 at 8:05 PM ET on Nov 11": the price the post was measured to. */
+function postPriceWords(e: PriceHistoryEvidence): string | null {
+  const p = e.postPrice;
+  if (!p) return null;
+  const kind = p.session === 'after_hours' ? 'after-hours price' : p.session === 'pre_market' ? 'pre-market price' : 'price';
+  return `the ${kind} of ${formatPrice(p.price)} at ${clockOf(p.time)} ET on ${formatDate(e.sessionDate)}, the last trade before the post`;
+}
+
+/** For a post with a date but no time, measured on its own day: say the close was used. */
+function noTimeNote(claim: Claim, e: PriceHistoryEvidence): string {
+  if (e.postPrice || claim.postedTime || !claim.postedAt || claim.postedAt !== e.sessionDate || claim.session || CLOSE_WORDS.test(claim.quote)) return '';
+  return " The post's time isn't known, so this uses the regular close; add the time to measure to the price when it was posted.";
+}
 
 const still = (e: PriceHistoryEvidence) => (e.settled ? '' : ' That session is still trading, so the numbers can change.');
 
@@ -272,19 +315,27 @@ export function evaluatePriceHistoryClaim(claim: Claim, e: PriceHistoryEvidence)
   if (claim.claimedPercent === null && claim.direction === null) {
     if (claim.claimedAmount === null) return { verdict: 'cant_check', reason: "The post doesn't say how the price moved, so there is nothing to compare." };
     const c = claim.claimedAmount;
-    const text = `${name} ${closed(e)} ${formatPrice(e.session.close)} on ${day}, after trading between ${formatPrice(e.session.low)} and ${formatPrice(e.session.high)}.${posted}${still(e)}`;
-    const gap = Math.abs(c - e.session.close) / c;
+    const p = e.postPrice;
+    const price = p?.price ?? e.session.close;
+    const [low, high] = p ? [p.low, p.high] : [e.session.low, e.session.high];
+    const text = p
+      ? `${name} was at ${postPriceWords(e)}, after trading between ${formatPrice(low)} and ${formatPrice(high)} that day.${still(e)}`
+      : `${name} ${closed(e)} ${formatPrice(e.session.close)} on ${day}, after trading between ${formatPrice(e.session.low)} and ${formatPrice(e.session.high)}.${posted}${still(e)}${noTimeNote(claim, e)}`;
+    const gap = Math.abs(c - price) / c;
     if (gap <= PRICE_TOLERANCE) return { verdict: 'holds_up', reason: text };
-    if (e.intraday && c >= e.session.low * (1 - PRICE_TOLERANCE) && c <= e.session.high * (1 + PRICE_TOLERANCE)) {
+    if (e.intraday && c >= low * (1 - PRICE_TOLERANCE) && c <= high * (1 + PRICE_TOLERANCE)) {
       return { verdict: 'holds_up', reason: `${text} ${formatPrice(c)} is within that day's range.` };
     }
-    if (gap <= PRICE_LOOSE) return { verdict: 'misleading', reason: `Close, but ${c > e.session.close ? 'overstated' : 'understated'}. ${text}` };
+    if (gap <= PRICE_LOOSE) return { verdict: 'misleading', reason: `Close, but ${c > price ? 'overstated' : 'understated'}. ${text}` };
     return { verdict: 'contradicted', reason: `${text} The post says ${formatPrice(c)}.` };
   }
 
   if (!e.move) return { verdict: 'cant_check', reason: "The price history doesn't cover that span." };
   const m = e.move;
-  const text = `${name} ${closed(e)} ${formatPrice(m.to.price)} on ${day}, ${describeChange(m.percent)} ${m.label} (from ${formatPrice(m.from.price)} on ${formatDate(m.from.date)}).${posted}${still(e)}`;
+  const through = postPriceWords(e);
+  const text = through
+    ? `${name} moved ${describeChange(m.percent)} ${m.label}: from ${formatPrice(m.from.price)} on ${formatDate(m.from.date)} to ${through}.${still(e)}`
+    : `${name} ${closed(e)} ${formatPrice(m.to.price)} on ${day}, ${describeChange(m.percent)} ${m.label} (from ${formatPrice(m.from.price)} on ${formatDate(m.from.date)}).${posted}${still(e)}${noTimeNote(claim, e)}`;
   return compareMove(claim, m.percent, m.lowPercent, m.highPercent, e.intraday, text, `traded between ${describeChange(m.lowPercent)} and ${describeChange(m.highPercent)} on the day`);
 }
 
@@ -333,7 +384,8 @@ function evaluateCap(claim: Claim, e: PriceHistoryEvidence): Evaluation {
     if (!e.move) return { verdict: 'cant_check', reason: "The post doesn't say over what period, so there is no change in value to compare." };
     const before = e.marketCap / (1 + e.move.percent / 100);
     const change = e.marketCap - before;
-    const text = `${e.entityName} ${change < 0 ? 'lost' : 'gained'} about ${formatUsd(Math.abs(change))} in market value ${e.move.label} (${describeChange(e.move.percent)} on a value of about ${formatUsd(e.marketCap)}${how}).${still(e)}`;
+    const through = postPriceWords(e);
+    const text = `${e.entityName} ${change < 0 ? 'lost' : 'gained'} about ${formatUsd(Math.abs(change))} in market value ${e.move.label} (${describeChange(e.move.percent)} on a value of about ${formatUsd(e.marketCap)}${how})${through ? `, measured to ${through}` : ''}.${still(e)}${noTimeNote(claim, e)}`;
     const words = `${formatUsd(claimed)} ${claim.direction === 'down' ? 'wiped out' : 'added'}`;
     if ((claim.direction === 'down') !== change < 0) return { verdict: 'contradicted', reason: `${text} The post says ${words}.` };
     const gap = Math.abs(claimed - Math.abs(change)) / claimed;
@@ -342,7 +394,10 @@ function evaluateCap(claim: Claim, e: PriceHistoryEvidence): Evaluation {
     return { verdict: 'contradicted', reason: `${text} The post says ${words}.` };
   }
 
-  const text = `${e.entityName} was worth about ${formatUsd(e.marketCap)} ${e.settled ? 'at the close' : 'during the session'} on ${day}${how}.${still(e)}`;
+  const through = postPriceWords(e);
+  const text = through
+    ? `${e.entityName} was worth about ${formatUsd(e.marketCap)} at ${through}${how}.${still(e)}`
+    : `${e.entityName} was worth about ${formatUsd(e.marketCap)} ${e.settled ? 'at the close' : 'during the session'} on ${day}${how}.${still(e)}${noTimeNote(claim, e)}`;
   const b = claim.bound === 'at_least' ? 'more than ' : claim.bound === 'at_most' ? 'less than ' : '';
   if (claim.bound) {
     const ok = claim.bound === 'at_least' ? e.marketCap >= claimed * (1 - CAP_TIGHT) : e.marketCap <= claimed * (1 + CAP_TIGHT);
@@ -379,6 +434,7 @@ export function createPriceHistorySource({ history, finnhub, now = () => new Dat
         'price-history',
         c.ticker,
         c.postedAt,
+        c.postedTime,
         c.type,
         c.window,
         c.windowDays,
@@ -386,6 +442,7 @@ export function createPriceHistorySource({ history, finnhub, now = () => new Dat
         c.session,
         c.direction ? 'dir' : '',
         /\bthis week\b/i.test(c.quote) ? 'calweek' : '',
+        CLOSE_WORDS.test(c.quote) ? 'close' : '',
         /\b(?:past|last) month\b|\b30 days\b/i.test(c.quote) ? 'rollmonth' : '',
       ].join(':'),
 
@@ -400,7 +457,7 @@ export function createPriceHistorySource({ history, finnhub, now = () => new Dat
       const sessionDate = bars[Math.max(end, 0)]!.date;
 
       const [intraday, profile] = await Promise.all([
-        claim.session ? history.intraday(claim.ticker, sessionDate) : Promise.resolve(undefined),
+        claim.session || claim.postedTime ? history.intraday(claim.ticker, sessionDate) : Promise.resolve(undefined),
         finnhub ? finnhub.profile(claim.ticker).catch(() => null) : Promise.resolve(null),
       ]);
       const capMillions = typeof profile?.marketCapitalization === 'number' && profile.marketCapitalization > 0 ? profile.marketCapitalization : null;

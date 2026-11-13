@@ -66,6 +66,8 @@ export function App() {
   const [fromScreenshot, setFromScreenshot] = useState(false);
   // When the post was written (YYYY-MM-DD), or '' for unknown.
   const [postedAt, setPostedAt] = useState('');
+  // The screenshot's exact post time, kept while the date shown is still the screenshot's.
+  const [stamp, setStamp] = useState<{ day: string; time: string } | null>(null);
   const [mode, setMode] = useState<Mode | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const [followed, setFollowed] = useState<string[]>(loadFollowed);
@@ -141,6 +143,7 @@ export function App() {
     if (!next.trim()) {
       setFromScreenshot(false);
       setPostedAt('');
+      setStamp(null);
     }
   }
 
@@ -153,6 +156,7 @@ export function App() {
       const reading = await readScreenshot(image);
       setText(reading.text);
       setPostedAt(reading.postedAt ?? '');
+      setStamp(reading.postedAt && reading.postedTime ? { day: reading.postedAt, time: reading.postedTime } : null);
       setFromScreenshot(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "The screenshot couldn't be read.");
@@ -167,7 +171,8 @@ export function App() {
     setError(null);
     try {
       const cleaned = cleanPostText(text);
-      const { result, postHash } = await checkPost(cleaned, fromScreenshot ? 'screenshot' : 'paste', postedAt || undefined);
+      const when = stamp && stamp.day === postedAt ? stamp.time : postedAt;
+      const { result, postHash } = await checkPost(cleaned, fromScreenshot ? 'screenshot' : 'paste', when || undefined);
       const entry = newEntry(cleaned, result, postHash);
       setHistory((h) => [entry, ...h]);
       setView({ name: 'results', entryId: entry.id, from: 'check' });

@@ -14,6 +14,7 @@ import {
   parseImageDataUrl,
   newYorkDate,
   parsePostDate,
+  parsePostTime,
   postDateInText,
   createEarningsReleases,
   createFinnhubCalendarSource,
@@ -44,7 +45,8 @@ import { createSupabaseStore, hashPost, type CheckSource, type CheckStore } from
 // 8: consensus estimates and earnings dates checked against Finnhub's earnings calendar.
 // 9: claims whose company is only the cashtag keep their ticker.
 // 10: false "Contradicted" verdicts: guessed dates and periods, other measures, guidance, GAAP misses.
-export const RESULT_VERSION = 10;
+// 11: with the post's exact time, moves end at the last trade before it, after hours included.
+export const RESULT_VERSION = 11;
 
 // A saved result is reused for the same post for this long (matches the SEC evidence cache).
 const REUSE_FOR_MS = 6 * 60 * 60 * 1000;
@@ -84,7 +86,8 @@ export interface Checker {
   check(text: string, meta?: CheckMeta): Promise<CheckOutcome>;
   /** Copy the post text out of a screenshot (a data URL). The screenshot itself is not kept anywhere. */
   /** postedAt: the post's date as YYYY-MM-DD, when the screenshot shows one. */
-  readScreenshot(image: unknown): Promise<{ text: string; platform: string | null; postedAt: string | null }>;
+  /** postedTime: the exact moment (ISO), when the screenshot shows a clock time ("8:06 PM · Nov 11, 2026"). */
+  readScreenshot(image: unknown): Promise<{ text: string; platform: string | null; postedAt: string | null; postedTime: string | null }>;
   /** Daily cards for followed tickers: price, earnings, new SEC filings. "AAPL,NVDA" or a list. */
   snapshots(tickers: unknown): Promise<TickerSnapshot[]>;
   describe(): string;
@@ -166,8 +169,10 @@ export function createChecker({ fixtures, env }: CheckerOptions): Checker {
     // "17h" or "Nov 9" as a day. A relative time is read against now, which is close
     // enough for a fresh screenshot; the person can fix the date before checking.
     const now = new Date();
-    const day = reading.postedAt ? (postDateInText(reading.postedAt, now) ?? parsePostDate(reading.postedAt, now)) : null;
-    return { text: reading.text, platform: reading.platform, postedAt: day && day <= newYorkDate(now) ? day : null };
+    const time = reading.postedAt ? parsePostTime(reading.postedAt, now) : null;
+    const day = time ? newYorkDate(new Date(time)) : reading.postedAt ? (postDateInText(reading.postedAt, now) ?? parsePostDate(reading.postedAt, now)) : null;
+    const ok = day && day <= newYorkDate(now);
+    return { text: reading.text, platform: reading.platform, postedAt: ok ? day : null, postedTime: ok ? time : null };
   }
 
   // Demo checks are never saved, so the made-up company stays out of the data.

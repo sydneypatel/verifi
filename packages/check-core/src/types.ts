@@ -102,6 +102,11 @@ export interface Claim {
   eventDate: string | null;
   /** The day the post was written (YYYY-MM-DD, New York time), when known. "Today" and "this week" mean that day's. */
   postedAt: string | null;
+  /**
+   * The moment the post was made (ISO, UTC), when the post gives its time exactly ("8:06 PM · Nov 11, 2026",
+   * a timestamp, "45m"). Price claims are then measured to the last trade before it, after hours included.
+   */
+  postedTime: string | null;
 }
 
 /** What the LLM (or the rule-based fallback) returns: a claim without an id. */
@@ -238,6 +243,11 @@ export interface PriceHistoryEvidence extends EvidenceBase {
   high52?: { price: number; date: string; scope: '52_week'; complete: true };
   /** A pre-market or after-hours move. */
   extended?: { kind: Session; base: PricePoint; last: PricePoint; percent: number; lowPercent: number; highPercent: number };
+  /**
+   * The price when the post was made: the last trade before its time, pre-market and after hours
+   * included. Every move and value is measured to it. Absent when the post's time isn't known.
+   */
+  postPrice?: { price: number; time: string; session: 'pre_market' | 'regular' | 'after_hours'; low: number; high: number };
   /** Market value on the session, estimated from today's value and the price change since. */
   marketCap?: number;
   /** Why the claim's span or reference can't be measured from the history. */
@@ -293,5 +303,7 @@ export interface CheckResult {
   extractor: string;
   /** The day the post was written (YYYY-MM-DD, New York), when known. Missing on results saved before it existed. */
   postedAt?: string | null;
+  /** The moment the post was made (ISO), when its time is known. */
+  postedTime?: string | null;
   checkedAt: string;
 }

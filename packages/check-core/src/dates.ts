@@ -115,6 +115,65 @@ const DATE_LINE_NOISE = /^(?:\d{1,2}:\d{2}(?::\d{2})?\s?(?:am|pm)?(?:\s?[a-z]{2,
  * inside a claim ("revenue for the quarter ended Sep 30, 2026") is never taken.
  * Returns the New York day, or null.
  */
+/** The moment a New York wall-clock time happened, as ISO (UTC). */
+export function newYorkInstant(day: string, minuteOfDay: number): string {
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number];
+  const hh = Math.floor(minuteOfDay / 60);
+  const mm = minuteOfDay % 60;
+  // New York is UTC-5 or UTC-4; the right one gives back the same wall clock.
+  for (const offset of [5, 4]) {
+    const at = new Date(Date.UTC(y, m - 1, d, hh + offset, mm));
+    if (newYorkDate(at) === day && nyClock(at) === minuteOfDay) return at.toISOString();
+  }
+  return new Date(Date.UTC(y, m - 1, d, hh + 5, mm)).toISOString();
+}
+
+const nyClockFormat = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+function nyClock(at: Date): number {
+  const parts = nyClockFormat.formatToParts(at);
+  return Number(parts.find((p) => p.type === 'hour')!.value) * 60 + Number(parts.find((p) => p.type === 'minute')!.value);
+}
+
+// "8:06 PM", "20:06", "8:06pm ET".
+const CLOCK = /\b(\d{1,2}):(\d{2})(?::\d{2})?\s?([ap]\.?m\.?)?(?:\s?(?:et|est|edt))?\b/i;
+
+/**
+ * The exact moment a post was made, as ISO, or null when only its day is known.
+ * Read from a timestamp, a clock time with a date ("8:06 PM · Nov 11, 2026", taken
+ * as New York time), or an age in seconds or minutes ("45m"). Ages in hours or days
+ * are rounded by the apps (5h can be 5h59m), so they give a day, not a time.
+ */
+export function parsePostTime(input: string, now: Date): string | null {
+  const raw = input.trim();
+  if (/^\d{4}-\d{2}-\d{2}t\d{2}:\d{2}/i.test(raw)) {
+    const t = Date.parse(raw);
+    return Number.isNaN(t) ? null : new Date(t).toISOString();
+  }
+  const text = raw.toLowerCase().replace(/^posted\s+/, '').replace(/\./g, '').replace(/\s+/g, ' ');
+  if (text === 'now' || text === 'just now') return now.toISOString();
+  const rel = text.match(/^(\d+)\s?(s|sec|secs|second|seconds|m|min|mins|minute|minutes)(?: ago)?$/);
+  if (rel) return new Date(now.getTime() - Number(rel[1]) * UNIT_MS[rel[2]!]!).toISOString();
+
+  const clock = raw.match(CLOCK);
+  if (!clock) return null;
+  let hour = Number(clock[1]);
+  const minute = Number(clock[2]);
+  const ampm = clock[3]?.toLowerCase().replace(/\./g, '');
+  if (ampm === 'pm' && hour < 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+  if (hour > 23 || minute > 59) return null;
+  const rest = raw
+    .replace(clock[0], ' ')
+    .split(/\s*[·•|,]\s*|\s+-\s+|\s+at\s+/i)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .join(' ');
+  const day = rest ? parsePostDate(rest, now) : null;
+  if (!day) return null;
+  const at = newYorkInstant(day, hour * 60 + minute);
+  return Date.parse(at) <= now.getTime() ? at : null;
+}
+
 /**
  * A copied Reddit header ("r/investing", "•", "2d ago", "u/name"): there the
  * relative age is the post's, so it is trusted even though it stands alone.
@@ -130,8 +189,13 @@ export function redditAge(text: string, now: Date): { day: string; approximate: 
 }
 
 export function postDateInText(text: string, now: Date): string | null {
+  return postStampInText(text, now)?.day ?? null;
+}
+
+/** The post's day from a line of its own, and its exact time when that line has one ("8:06 PM · Nov 11, 2026"). */
+export function postStampInText(text: string, now: Date): { day: string; time: string | null } | null {
   const reddit = redditAge(text, now);
-  if (reddit) return reddit.day;
+  if (reddit) return { day: reddit.day, time: null };
   const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
   const candidates = [...lines.slice(-3).reverse(), ...lines.slice(0, 3)];
   for (const line of candidates) {
@@ -146,7 +210,11 @@ export function postDateInText(text: string, now: Date): string | null {
     if (found === -1) continue;
     // Relative words ("2d", "Monday") alone on a line are too loose to trust; written-out dates are not.
     if (!/\d{4}|[a-z]{3,9}\.? \d{1,2}|\d{1,2}\/\d{1,2}/i.test(parts[found]!)) continue;
-    if (parts.every((p, i) => i === found || DATE_LINE_NOISE.test(p))) return dates[found]!;
+    if (parts.every((p, i) => i === found || DATE_LINE_NOISE.test(p))) {
+      const clock = parts.find((p) => CLOCK.test(p));
+      const time = clock ? parsePostTime(`${clock} · ${parts[found]}`, now) : null;
+      return { day: dates[found]!, time: time && newYorkDate(new Date(time)) === dates[found] ? time : null };
+    }
   }
   return null;
 }

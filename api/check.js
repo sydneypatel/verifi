@@ -103,6 +103,46 @@ function parsePostDate(input, now) {
   return null;
 }
 var DATE_LINE_NOISE = /^(?:\d{1,2}:\d{2}(?::\d{2})?\s?(?:am|pm)?(?:\s?[a-z]{2,4})?|\d+(?:[.,]\d+)?[km]?\s+views?|edited|posted(?: on)?|sent|from \w+)$/i;
+function newYorkInstant(day, minuteOfDay) {
+  const [y, m, d] = day.split("-").map(Number);
+  const hh = Math.floor(minuteOfDay / 60);
+  const mm = minuteOfDay % 60;
+  for (const offset of [5, 4]) {
+    const at = new Date(Date.UTC(y, m - 1, d, hh + offset, mm));
+    if (newYorkDate(at) === day && nyClock(at) === minuteOfDay) return at.toISOString();
+  }
+  return new Date(Date.UTC(y, m - 1, d, hh + 5, mm)).toISOString();
+}
+var nyClockFormat = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+function nyClock(at) {
+  const parts = nyClockFormat.formatToParts(at);
+  return Number(parts.find((p) => p.type === "hour").value) * 60 + Number(parts.find((p) => p.type === "minute").value);
+}
+var CLOCK = /\b(\d{1,2}):(\d{2})(?::\d{2})?\s?([ap]\.?m\.?)?(?:\s?(?:et|est|edt))?\b/i;
+function parsePostTime(input, now) {
+  const raw = input.trim();
+  if (/^\d{4}-\d{2}-\d{2}t\d{2}:\d{2}/i.test(raw)) {
+    const t = Date.parse(raw);
+    return Number.isNaN(t) ? null : new Date(t).toISOString();
+  }
+  const text = raw.toLowerCase().replace(/^posted\s+/, "").replace(/\./g, "").replace(/\s+/g, " ");
+  if (text === "now" || text === "just now") return now.toISOString();
+  const rel = text.match(/^(\d+)\s?(s|sec|secs|second|seconds|m|min|mins|minute|minutes)(?: ago)?$/);
+  if (rel) return new Date(now.getTime() - Number(rel[1]) * UNIT_MS[rel[2]]).toISOString();
+  const clock2 = raw.match(CLOCK);
+  if (!clock2) return null;
+  let hour = Number(clock2[1]);
+  const minute = Number(clock2[2]);
+  const ampm = clock2[3]?.toLowerCase().replace(/\./g, "");
+  if (ampm === "pm" && hour < 12) hour += 12;
+  if (ampm === "am" && hour === 12) hour = 0;
+  if (hour > 23 || minute > 59) return null;
+  const rest = raw.replace(clock2[0], " ").split(/\s*[·•|,]\s*|\s+-\s+|\s+at\s+/i).map((p) => p.trim()).filter(Boolean).join(" ");
+  const day = rest ? parsePostDate(rest, now) : null;
+  if (!day) return null;
+  const at = newYorkInstant(day, hour * 60 + minute);
+  return Date.parse(at) <= now.getTime() ? at : null;
+}
 function redditAge(text, now) {
   const head = text.split(/\n/).map((l) => l.trim()).filter(Boolean).slice(0, 6);
   if (!head.some((l) => /^r\/\w+$/i.test(l))) return null;
@@ -111,8 +151,11 @@ function redditAge(text, now) {
   return day ? { day, approximate: /\d\s?[dw]\s/i.test(age) } : null;
 }
 function postDateInText(text, now) {
+  return postStampInText(text, now)?.day ?? null;
+}
+function postStampInText(text, now) {
   const reddit = redditAge(text, now);
-  if (reddit) return reddit.day;
+  if (reddit) return { day: reddit.day, time: null };
   const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
   const candidates = [...lines.slice(-3).reverse(), ...lines.slice(0, 3)];
   for (const line of candidates) {
@@ -122,7 +165,11 @@ function postDateInText(text, now) {
     const found = dates.findIndex(Boolean);
     if (found === -1) continue;
     if (!/\d{4}|[a-z]{3,9}\.? \d{1,2}|\d{1,2}\/\d{1,2}/i.test(parts[found])) continue;
-    if (parts.every((p, i) => i === found || DATE_LINE_NOISE.test(p))) return dates[found];
+    if (parts.every((p, i) => i === found || DATE_LINE_NOISE.test(p))) {
+      const clock2 = parts.find((p) => CLOCK.test(p));
+      const time = clock2 ? parsePostTime(`${clock2} \xB7 ${parts[found]}`, now) : null;
+      return { day: dates[found], time: time && newYorkDate(new Date(time)) === dates[found] ? time : null };
+    }
   }
   return null;
 }
@@ -194,7 +241,8 @@ var EMPTY_CLAIM = {
   comparison: null,
   segment: null,
   eventDate: null,
-  postedAt: null
+  postedAt: null,
+  postedTime: null
 };
 
 // ../../packages/check-core/src/llm/normalize.ts
@@ -287,7 +335,8 @@ function normalizeClaims(raw) {
       comparison: type === "revenue_growth" || type === "earnings_result" ? oneOf(row.comparison, COMPARISONS) : null,
       segment: segment && !NOT_A_SEGMENT.test(segment) ? segment : null,
       eventDate: type === "earnings_date" ? asString(row.eventDate)?.slice(0, 40) ?? null : null,
-      postedAt: null
+      postedAt: null,
+      postedTime: null
     });
     if (claims.length >= MAX_CLAIMS) break;
   }
@@ -985,19 +1034,29 @@ function namesInQuote(name, quote) {
 }
 function resolvePostedAt(raw, options, now) {
   let day = null;
+  let time = null;
   const given = options.postedAt;
   if (given instanceof Date) {
     if (Number.isNaN(given.getTime())) throw new InputError("Couldn't read the post's date.");
     day = newYorkDate(given);
+    time = given.toISOString();
   } else if (typeof given === "string" && given.trim()) {
-    day = parsePostDate(given, now);
+    time = parsePostTime(given, now);
+    day = time ? newYorkDate(new Date(time)) : parsePostDate(given, now) ?? postDateInText(given, now);
     if (!day) throw new InputError(`Couldn't read the post date "${given.trim().slice(0, 40)}". Use a date like Nov 9 or 2026-11-09, or leave it blank.`);
   } else {
     const stamp = postTimestamp(raw);
-    day = (stamp ? parsePostDate(stamp, now) : null) ?? postDateInText(raw.replace(/\r\n?/g, "\n"), now);
+    time = stamp ? parsePostTime(stamp, now) : null;
+    day = time ? newYorkDate(new Date(time)) : stamp ? parsePostDate(stamp, now) : null;
+    if (!day) {
+      const line = postStampInText(raw.replace(/\r\n?/g, "\n"), now);
+      day = line?.day ?? null;
+      time = line?.time ?? null;
+    }
   }
   if (day && day > newYorkDate(now)) throw new InputError("The post's date is in the future.");
-  return day;
+  if (time && Date.parse(time) > now.getTime()) throw new InputError("The post's time is in the future.");
+  return { day, time };
 }
 async function checkPost(postText, deps, options = {}) {
   const text = cleanPostText(postText);
@@ -1006,7 +1065,7 @@ async function checkPost(postText, deps, options = {}) {
     throw new InputError(`That post is too long. The limit is ${MAX_POST_LENGTH} characters.`);
   }
   const now = deps.now?.() ?? /* @__PURE__ */ new Date();
-  const postedAt = resolvePostedAt(postText, options, now);
+  const { day: postedAt, time: postedTime } = resolvePostedAt(postText, options, now);
   const approxDate = !options.postedAt && !postTimestamp(postText) && Boolean(redditAge(postText.replace(/\r\n?/g, "\n"), now)?.approximate);
   const extracted = dedupeClaims((await assignTickers(await deps.extractor.extractClaims(text), text, deps.directory)).map((c) => rollingMonth(c, text)));
   const tickers = [...new Set(extracted.map((c) => c.ticker).filter((t) => Boolean(t)))];
@@ -1019,7 +1078,8 @@ async function checkPost(postText, deps, options = {}) {
   const claims = extracted.map((c, i) => {
     const id = `c${i + 1}`;
     const dayMove = (c.type === "price_move" || c.type === "market_cap") && c.window === "day" && !c.session;
-    const claim = { ...c, id, postedAt: dayMove && sessionDay ? sessionDay : postedAt };
+    const named = dayMove && sessionDay && sessionDay !== postedAt;
+    const claim = { ...c, id, postedAt: named ? sessionDay : postedAt, postedTime: named ? null : postedTime };
     if (postPeriod && borrowsPeriod(c, postPeriod)) {
       borrowed.add(id);
       claim.fiscalYear = postPeriod.fiscalYear;
@@ -1112,6 +1172,7 @@ async function checkPost(postText, deps, options = {}) {
     },
     extractor: deps.extractor.name,
     postedAt,
+    postedTime,
     checkedAt: now.toISOString()
   };
 }
@@ -2621,8 +2682,12 @@ function createAlpacaHistory({ alpaca, now = () => /* @__PURE__ */ new Date() })
 // ../../packages/check-core/src/sources/alpaca/historySource.ts
 var PRE_OPEN = 9 * 60 + 30;
 var CLOSE = 16 * 60;
+var BAR_MS = 5 * 6e4;
+var CLOSE_WORDS = /\bclos(?:e|ed|es|ing)\b/i;
+var clockFormat = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
+var clockOf = (iso3) => clockFormat.format(new Date(iso3));
 function needsHistory(claim, today) {
-  return Boolean(claim.postedAt && claim.postedAt < today) || claim.windowDays !== null || claim.reference !== null || claim.session !== null;
+  return Boolean(claim.postedAt && claim.postedAt < today) || claim.postedTime !== null || claim.windowDays !== null || claim.reference !== null || claim.session !== null;
 }
 function weekStart(date) {
   const weekday = (/* @__PURE__ */ new Date(`${date}T00:00:00Z`)).getUTCDay();
@@ -2701,6 +2766,17 @@ function measureHistory(claim, bars, options) {
     };
   }
   const e = bars[end];
+  const postTime = claim.postedTime ? Date.parse(claim.postedTime) : null;
+  const seen = postTime === null ? [] : (options.intraday ?? []).filter((b) => b.date === e.date && Date.parse(b.time) + BAR_MS <= postTime);
+  const last = seen[seen.length - 1];
+  const postPrice = last && !CLOSE_WORDS.test(claim.quote) ? {
+    price: last.close,
+    time: new Date(Date.parse(last.time) + BAR_MS).toISOString(),
+    session: last.minute < PRE_OPEN ? "pre_market" : last.minute >= CLOSE ? "after_hours" : "regular",
+    low: Math.min(...seen.map((b) => b.low)),
+    high: Math.max(...seen.map((b) => b.high))
+  } : void 0;
+  const endPrice = postPrice?.price ?? e.close;
   const evidence = {
     ...base,
     asOf: e.date,
@@ -2710,21 +2786,23 @@ function measureHistory(claim, bars, options) {
     settled: e.date < options.today,
     session: { open: e.open, high: e.high, low: e.low, close: e.close }
   };
-  if (options.marketCap && latest.close > 0) evidence.marketCap = options.marketCap * (e.close / latest.close);
+  if (postPrice) evidence.postPrice = postPrice;
+  if (options.marketCap && latest.close > 0) evidence.marketCap = options.marketCap * (endPrice / latest.close);
   if (claim.type === "price_move" && claim.session) {
     const day = options.intraday ?? [];
     const pre = claim.session === "pre_market";
-    const trades = day.filter((b) => pre ? b.minute < PRE_OPEN : b.minute >= CLOSE);
+    const trades = day.filter((b) => (pre ? b.minute < PRE_OPEN : b.minute >= CLOSE) && (postTime === null || Date.parse(b.time) + BAR_MS <= postTime));
     const from = pre ? bars[end - 1] : e;
     if (trades.length === 0 || !from) {
-      evidence.unavailable = `The price data has no ${pre ? "pre-market" : "after-hours"} trades for ${ticker} on ${formatDate(e.date)}.`;
+      const later = postTime !== null && day.some((b) => pre ? b.minute < PRE_OPEN : b.minute >= CLOSE);
+      evidence.unavailable = later ? `The post was made at ${clockOf(claim.postedTime)} ET on ${formatDate(e.date)}, before any ${pre ? "pre-market" : "after-hours"} trades for ${ticker} that day.` : `The price data has no ${pre ? "pre-market" : "after-hours"} trades for ${ticker} on ${formatDate(e.date)}.`;
     } else {
-      const last = trades[trades.length - 1];
+      const last2 = trades[trades.length - 1];
       evidence.extended = {
         kind: claim.session,
         base: { date: from.date, price: from.close },
-        last: { date: e.date, price: last.close },
-        percent: pct(last.close, from.close),
+        last: { date: e.date, price: last2.close },
+        percent: pct(last2.close, from.close),
         lowPercent: pct(Math.min(...trades.map((t) => t.low)), from.close),
         highPercent: pct(Math.max(...trades.map((t) => t.high)), from.close)
       };
@@ -2760,10 +2838,10 @@ function measureHistory(claim, bars, options) {
       evidence.move = {
         label: span.label,
         from: span.from,
-        to: { date: e.date, price: e.close },
-        percent: pct(e.close, span.from.price),
-        lowPercent: pct(e.low, span.from.price),
-        highPercent: pct(e.high, span.from.price)
+        to: { date: e.date, price: endPrice },
+        percent: pct(endPrice, span.from.price),
+        lowPercent: pct(postPrice?.low ?? e.low, span.from.price),
+        highPercent: pct(postPrice?.high ?? e.high, span.from.price)
       };
     }
   }
@@ -2783,6 +2861,10 @@ function figuresFor4(e) {
   if (e.extended) {
     rows.push({ label: `${e.extended.kind === "pre_market" ? "Pre-market" : "After-hours"}, last trade`, value: formatPrice(e.extended.last.price) });
   }
+  if (e.postPrice) {
+    const kind = e.postPrice.session === "after_hours" ? "After hours" : e.postPrice.session === "pre_market" ? "Pre-market" : "Price";
+    rows.push({ label: `${kind}, ${clockOf(e.postPrice.time)} ET (last trade before the post)`, value: formatPrice(e.postPrice.price) });
+  }
   if (e.marketCap) rows.push({ label: "Market value (est.)", value: formatUsd(e.marketCap) });
   return rows;
 }
@@ -2791,6 +2873,16 @@ function within3(claimed, low, high) {
   return claimed >= Math.min(low, high) - margin && claimed <= Math.max(low, high) + margin;
 }
 var closed = (e) => e.settled ? "closed at" : "was at";
+function postPriceWords(e) {
+  const p = e.postPrice;
+  if (!p) return null;
+  const kind = p.session === "after_hours" ? "after-hours price" : p.session === "pre_market" ? "pre-market price" : "price";
+  return `the ${kind} of ${formatPrice(p.price)} at ${clockOf(p.time)} ET on ${formatDate(e.sessionDate)}, the last trade before the post`;
+}
+function noTimeNote(claim, e) {
+  if (e.postPrice || claim.postedTime || !claim.postedAt || claim.postedAt !== e.sessionDate || claim.session || CLOSE_WORDS.test(claim.quote)) return "";
+  return " The post's time isn't known, so this uses the regular close; add the time to measure to the price when it was posted.";
+}
 var still = (e) => e.settled ? "" : " That session is still trading, so the numbers can change.";
 function evaluatePriceHistoryClaim(claim, e) {
   if (e.unavailable) return { verdict: "cant_check", reason: e.unavailable };
@@ -2836,18 +2928,22 @@ function evaluatePriceHistoryClaim(claim, e) {
   if (claim.claimedPercent === null && claim.direction === null) {
     if (claim.claimedAmount === null) return { verdict: "cant_check", reason: "The post doesn't say how the price moved, so there is nothing to compare." };
     const c = claim.claimedAmount;
-    const text2 = `${name} ${closed(e)} ${formatPrice(e.session.close)} on ${day}, after trading between ${formatPrice(e.session.low)} and ${formatPrice(e.session.high)}.${posted}${still(e)}`;
-    const gap = Math.abs(c - e.session.close) / c;
+    const p = e.postPrice;
+    const price = p?.price ?? e.session.close;
+    const [low, high] = p ? [p.low, p.high] : [e.session.low, e.session.high];
+    const text2 = p ? `${name} was at ${postPriceWords(e)}, after trading between ${formatPrice(low)} and ${formatPrice(high)} that day.${still(e)}` : `${name} ${closed(e)} ${formatPrice(e.session.close)} on ${day}, after trading between ${formatPrice(e.session.low)} and ${formatPrice(e.session.high)}.${posted}${still(e)}${noTimeNote(claim, e)}`;
+    const gap = Math.abs(c - price) / c;
     if (gap <= PRICE_TOLERANCE) return { verdict: "holds_up", reason: text2 };
-    if (e.intraday && c >= e.session.low * (1 - PRICE_TOLERANCE) && c <= e.session.high * (1 + PRICE_TOLERANCE)) {
+    if (e.intraday && c >= low * (1 - PRICE_TOLERANCE) && c <= high * (1 + PRICE_TOLERANCE)) {
       return { verdict: "holds_up", reason: `${text2} ${formatPrice(c)} is within that day's range.` };
     }
-    if (gap <= PRICE_LOOSE) return { verdict: "misleading", reason: `Close, but ${c > e.session.close ? "overstated" : "understated"}. ${text2}` };
+    if (gap <= PRICE_LOOSE) return { verdict: "misleading", reason: `Close, but ${c > price ? "overstated" : "understated"}. ${text2}` };
     return { verdict: "contradicted", reason: `${text2} The post says ${formatPrice(c)}.` };
   }
   if (!e.move) return { verdict: "cant_check", reason: "The price history doesn't cover that span." };
   const m = e.move;
-  const text = `${name} ${closed(e)} ${formatPrice(m.to.price)} on ${day}, ${describeChange(m.percent)} ${m.label} (from ${formatPrice(m.from.price)} on ${formatDate(m.from.date)}).${posted}${still(e)}`;
+  const through = postPriceWords(e);
+  const text = through ? `${name} moved ${describeChange(m.percent)} ${m.label}: from ${formatPrice(m.from.price)} on ${formatDate(m.from.date)} to ${through}.${still(e)}` : `${name} ${closed(e)} ${formatPrice(m.to.price)} on ${day}, ${describeChange(m.percent)} ${m.label} (from ${formatPrice(m.from.price)} on ${formatDate(m.from.date)}).${posted}${still(e)}${noTimeNote(claim, e)}`;
   return compareMove(claim, m.percent, m.lowPercent, m.highPercent, e.intraday, text, `traded between ${describeChange(m.lowPercent)} and ${describeChange(m.highPercent)} on the day`);
 }
 function compareMove(claim, percent, lowPercent, highPercent, intraday, text, rangeWords) {
@@ -2891,7 +2987,8 @@ function evaluateCap(claim, e) {
     if (!e.move) return { verdict: "cant_check", reason: "The post doesn't say over what period, so there is no change in value to compare." };
     const before = e.marketCap / (1 + e.move.percent / 100);
     const change = e.marketCap - before;
-    const text2 = `${e.entityName} ${change < 0 ? "lost" : "gained"} about ${formatUsd(Math.abs(change))} in market value ${e.move.label} (${describeChange(e.move.percent)} on a value of about ${formatUsd(e.marketCap)}${how}).${still(e)}`;
+    const through2 = postPriceWords(e);
+    const text2 = `${e.entityName} ${change < 0 ? "lost" : "gained"} about ${formatUsd(Math.abs(change))} in market value ${e.move.label} (${describeChange(e.move.percent)} on a value of about ${formatUsd(e.marketCap)}${how})${through2 ? `, measured to ${through2}` : ""}.${still(e)}${noTimeNote(claim, e)}`;
     const words = `${formatUsd(claimed)} ${claim.direction === "down" ? "wiped out" : "added"}`;
     if (claim.direction === "down" !== change < 0) return { verdict: "contradicted", reason: `${text2} The post says ${words}.` };
     const gap2 = Math.abs(claimed - Math.abs(change)) / claimed;
@@ -2899,7 +2996,8 @@ function evaluateCap(claim, e) {
     if (gap2 <= CAP_LOOSE) return { verdict: "misleading", reason: `Close, but ${claimed > Math.abs(change) ? "overstated" : "understated"}. ${text2}` };
     return { verdict: "contradicted", reason: `${text2} The post says ${words}.` };
   }
-  const text = `${e.entityName} was worth about ${formatUsd(e.marketCap)} ${e.settled ? "at the close" : "during the session"} on ${day}${how}.${still(e)}`;
+  const through = postPriceWords(e);
+  const text = through ? `${e.entityName} was worth about ${formatUsd(e.marketCap)} at ${through}${how}.${still(e)}` : `${e.entityName} was worth about ${formatUsd(e.marketCap)} ${e.settled ? "at the close" : "during the session"} on ${day}${how}.${still(e)}${noTimeNote(claim, e)}`;
   const b = claim.bound === "at_least" ? "more than " : claim.bound === "at_most" ? "less than " : "";
   if (claim.bound) {
     const ok = claim.bound === "at_least" ? e.marketCap >= claimed * (1 - CAP_TIGHT) : e.marketCap <= claimed * (1 + CAP_TIGHT);
@@ -2922,6 +3020,7 @@ function createPriceHistorySource({ history, finnhub, now = () => /* @__PURE__ *
       "price-history",
       c.ticker,
       c.postedAt,
+      c.postedTime,
       c.type,
       c.window,
       c.windowDays,
@@ -2929,6 +3028,7 @@ function createPriceHistorySource({ history, finnhub, now = () => /* @__PURE__ *
       c.session,
       c.direction ? "dir" : "",
       /\bthis week\b/i.test(c.quote) ? "calweek" : "",
+      CLOSE_WORDS.test(c.quote) ? "close" : "",
       /\b(?:past|last) month\b|\b30 days\b/i.test(c.quote) ? "rollmonth" : ""
     ].join(":"),
     emptyReason: (claim) => `No price history found for ${claim.ticker}. It may not trade on a US exchange.`,
@@ -2940,7 +3040,7 @@ function createPriceHistorySource({ history, finnhub, now = () => /* @__PURE__ *
       const end = lastOnOrBefore(bars, claim.postedAt ?? today);
       const sessionDate = bars[Math.max(end, 0)].date;
       const [intraday, profile] = await Promise.all([
-        claim.session ? history.intraday(claim.ticker, sessionDate) : Promise.resolve(void 0),
+        claim.session || claim.postedTime ? history.intraday(claim.ticker, sessionDate) : Promise.resolve(void 0),
         finnhub ? finnhub.profile(claim.ticker).catch(() => null) : Promise.resolve(null)
       ]);
       const capMillions = typeof profile?.marketCapitalization === "number" && profile.marketCapitalization > 0 ? profile.marketCapitalization : null;
@@ -3661,7 +3761,7 @@ function createSupabaseStore(env) {
 }
 
 // src/checker.ts
-var RESULT_VERSION = 10;
+var RESULT_VERSION = 11;
 var REUSE_FOR_MS = 6 * 60 * 60 * 1e3;
 var REUSE_MARKET_FOR_MS = 5 * 60 * 1e3;
 function reuseWindow(result) {
@@ -3708,8 +3808,10 @@ function createChecker({ fixtures, env }) {
     const reading = await screenshots.read(image);
     if (!reading.text) throw new InputError("Couldn't find a post in that screenshot. Try one that shows the post's text.");
     const now = /* @__PURE__ */ new Date();
-    const day = reading.postedAt ? postDateInText(reading.postedAt, now) ?? parsePostDate(reading.postedAt, now) : null;
-    return { text: reading.text, platform: reading.platform, postedAt: day && day <= newYorkDate(now) ? day : null };
+    const time = reading.postedAt ? parsePostTime(reading.postedAt, now) : null;
+    const day = time ? newYorkDate(new Date(time)) : reading.postedAt ? postDateInText(reading.postedAt, now) ?? parsePostDate(reading.postedAt, now) : null;
+    const ok = day && day <= newYorkDate(now);
+    return { text: reading.text, platform: reading.platform, postedAt: ok ? day : null, postedTime: ok ? time : null };
   }
   const store = fixtures ? null : createSupabaseStore(env);
   async function check(text, meta = {}) {

@@ -1,6 +1,6 @@
 export * from './types';
 export { checkPost, dedupeClaims, InputError, MAX_POST_LENGTH, postTickers, sharedPostPeriod, statedPostPeriod, type CheckDeps, type CheckOptions } from './pipeline';
-export { addDays, daysBetween, newYorkDate, parsePostDate, postDateInText, resolveEventDay } from './dates';
+export { addDays, daysBetween, newYorkDate, newYorkInstant, parsePostDate, parsePostTime, postDateInText, postStampInText, resolveEventDay } from './dates';
 export { MemoryCache, type EvidenceCache } from './cache';
 export {
   EMPTY_CLAIM,

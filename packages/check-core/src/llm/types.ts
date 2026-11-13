@@ -117,4 +117,5 @@ export const EMPTY_CLAIM = {
   segment: null,
   eventDate: null,
   postedAt: null,
+  postedTime: null,
 } as const;

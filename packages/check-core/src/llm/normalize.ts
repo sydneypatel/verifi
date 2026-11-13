@@ -145,6 +145,7 @@ export function normalizeClaims(raw: unknown): ExtractedClaim[] {
       segment: segment && !NOT_A_SEGMENT.test(segment) ? segment : null,
       eventDate: type === 'earnings_date' ? asString(row.eventDate)?.slice(0, 40) ?? null : null,
       postedAt: null,
+      postedTime: null,
     });
     if (claims.length >= MAX_CLAIMS) break;
   }

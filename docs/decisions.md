@@ -56,6 +56,23 @@ Contradicted. Found by replaying 94 saved posts (73 Contradicted verdicts, most 
 | "The S&P", "the Nasdaq" | The index's ETF (SPY, QQQ), never S&P Global |
 | What an investment would be worth; a past calendar year's move | Can't be checked as a price move |
 
+## The price when the post was made
+
+When the post gives its exact time, every price, move and market-value claim in it ends at one
+price: the last trade before the post (5-minute bars from Alpaca, pre-market and after hours
+included). "Down $690B this week after plunging in after-hours trading", posted at 8:06 PM, is
+measured from the Friday close to the 8:00 PM after-hours price, the same end point its
+after-hours claim uses. The start of each span is unchanged (the Friday close for "this week").
+
+- The time is taken only when it is exact: a timestamp, a clock time with a date ("8:06 PM ·
+  Nov 11, 2026", read as New York time, from the post, a screenshot or the API), or an age in
+  minutes ("45m"). Ages in hours or days are rounded down by the apps (5h can be 5h59m, which can
+  cross the 4 PM close), so they give the day only.
+- "Closed at", "closed down 7% this week", "at the close": the regular close, whatever the time.
+- With a date but no time, the regular close is used, and the reason says so.
+- Thinly traded stocks often have no extended-hours trades in the feed; then the last regular
+  trade before the post is used.
+
 ## Verdict rules for revenue claims
 
 Thresholds are constants at the top of `sources/sec/revenueSource.ts`. They are a first
