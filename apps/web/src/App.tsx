@@ -56,6 +56,10 @@ function viewFor(tab: Tab): View {
 // Sync errors never interrupt the person; this device's copy keeps working.
 const logSyncError = (error: unknown) => console.error('Verifi sync:', error);
 
+const pad = (n: number) => String(n).padStart(2, '0');
+/** A moment's date in this device's time zone, YYYY-MM-DD. */
+const localDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
 export function App() {
   const [view, setView] = useState<View>({ name: 'home' });
   const [text, setText] = useState('');
@@ -66,8 +70,8 @@ export function App() {
   const [fromScreenshot, setFromScreenshot] = useState(false);
   // When the post was written (YYYY-MM-DD), or '' for unknown.
   const [postedAt, setPostedAt] = useState('');
-  // The screenshot's exact post time, kept while the date shown is still the screenshot's.
-  const [stamp, setStamp] = useState<{ day: string; time: string } | null>(null);
+  // The post's time of day, HH:MM in the person's own time zone, or '' when unknown.
+  const [postedClock, setPostedClock] = useState('');
   const [mode, setMode] = useState<Mode | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const [followed, setFollowed] = useState<string[]>(loadFollowed);
@@ -143,7 +147,7 @@ export function App() {
     if (!next.trim()) {
       setFromScreenshot(false);
       setPostedAt('');
-      setStamp(null);
+      setPostedClock('');
     }
   }
 
@@ -155,8 +159,10 @@ export function App() {
       const image = await shrinkImage(file);
       const reading = await readScreenshot(image);
       setText(reading.text);
-      setPostedAt(reading.postedAt ?? '');
-      setStamp(reading.postedAt && reading.postedTime ? { day: reading.postedAt, time: reading.postedTime } : null);
+      // A screenshot's exact time fills both fields, shown in this device's time zone.
+      const at = reading.postedTime ? new Date(reading.postedTime) : null;
+      setPostedAt(at ? localDate(at) : (reading.postedAt ?? ''));
+      setPostedClock(at ? `${pad(at.getHours())}:${pad(at.getMinutes())}` : '');
       setFromScreenshot(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "The screenshot couldn't be read.");
@@ -171,7 +177,8 @@ export function App() {
     setError(null);
     try {
       const cleaned = cleanPostText(text);
-      const when = stamp && stamp.day === postedAt ? stamp.time : postedAt;
+      // With a time, send the exact moment, so prices are measured to the last trade before the post.
+      const when = postedAt && postedClock ? new Date(`${postedAt}T${postedClock}`).toISOString() : postedAt;
       const { result, postHash } = await checkPost(cleaned, fromScreenshot ? 'screenshot' : 'paste', when || undefined);
       const entry = newEntry(cleaned, result, postHash);
       setHistory((h) => [entry, ...h]);
@@ -285,7 +292,12 @@ export function App() {
         reading={reading}
         fromScreenshot={fromScreenshot}
         postedAt={postedAt}
-        onPostedAtChange={setPostedAt}
+        onPostedAtChange={(date) => {
+          setPostedAt(date);
+          if (!date) setPostedClock('');
+        }}
+        postedClock={postedClock}
+        onPostedClockChange={setPostedClock}
         onSubmit={submit}
         email={email}
         onOpenAccount={openAccount}

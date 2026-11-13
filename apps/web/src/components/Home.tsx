@@ -36,6 +36,9 @@ interface HomeProps {
   /** When the post was written, YYYY-MM-DD, or '' when unknown. */
   postedAt: string;
   onPostedAtChange: (date: string) => void;
+  /** The post's time of day, HH:MM in the person's time zone, or '' when unknown. */
+  postedClock: string;
+  onPostedClockChange: (time: string) => void;
   onSubmit: () => void;
   /** Signed-in email, or null for a guest. */
   email: string | null;
@@ -65,6 +68,8 @@ export function Home({
   fromScreenshot,
   postedAt,
   onPostedAtChange,
+  postedClock,
+  onPostedClockChange,
   onSubmit,
   email,
   onOpenAccount,
@@ -214,10 +219,10 @@ export function Home({
             </p>
           )}
           <div className="flex flex-col gap-1.5">
+            <label htmlFor="posted-at" className="text-[13px] font-semibold text-body">
+              Posted on
+            </label>
             <div className="flex items-center gap-2">
-              <label htmlFor="posted-at" className="shrink-0 text-[13px] font-semibold text-body">
-                Posted on
-              </label>
               <input
                 id="posted-at"
                 type="date"
@@ -226,14 +231,26 @@ export function Home({
                 disabled={reading}
                 onChange={(event) => onPostedAtChange(event.target.value)}
                 aria-describedby="posted-at-hint"
-                className="h-11 min-w-0 flex-1 rounded-xl border border-dash bg-ground px-3 text-base text-ink disabled:opacity-60"
+                className="h-11 min-w-0 flex-1 rounded-xl border border-dash bg-ground px-2 text-base text-ink disabled:opacity-60"
+              />
+              <label htmlFor="posted-time" className="sr-only">
+                Time posted
+              </label>
+              <input
+                id="posted-time"
+                type="time"
+                value={postedClock}
+                disabled={reading || !postedAt}
+                onChange={(event) => onPostedClockChange(event.target.value)}
+                aria-describedby="posted-at-hint"
+                className="h-11 w-[8.5rem] shrink-0 rounded-xl border border-dash bg-ground px-2 text-base text-ink disabled:opacity-40"
               />
               {postedAt && (
                 <button
                   type="button"
                   onClick={() => onPostedAtChange('')}
-                  aria-label="Clear the post date"
-                  className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-teal-dark"
+                  aria-label="Clear the post date and time"
+                  className="flex h-11 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-teal-dark"
                 >
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -242,7 +259,8 @@ export function Home({
               )}
             </div>
             <p id="posted-at-hint" className="text-xs leading-snug text-muted">
-              Optional. "Today" and "this week" in the post are checked for this date. Leave it blank for a post from today.
+              Optional. "Today" and "this week" in the post are checked for this date. Add the time (your time zone) to measure prices
+              at the moment it was posted, after hours included. Leave both blank for a post from today.
             </p>
           </div>
           <input
