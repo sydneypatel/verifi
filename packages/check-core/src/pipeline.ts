@@ -167,8 +167,14 @@ async function assignTickers(extracted: ExtractedClaim[], text: string, director
   };
   const byName = async (name: string) => (directory ? directory.findByName(name).catch(() => null) : null);
 
-  // 1. The model's ticker, or a cashtag in the claim's own words.
-  const claims = extracted.map((c) => ({ ...c, ticker: c.ticker ?? postTickers(c.quote)[0] ?? null }));
+  // 1. The model's ticker, or a cashtag in the claim's own words. A "company"
+  // that is only the ticker ("$NVDA", "NBIS") names no company: keep it as the
+  // ticker, or step 2 reads it as a second company and drops the ticker.
+  const claims = extracted.map((c) => {
+    const asTicker = c.company && /^\$?[A-Z]{1,5}(?:[.-][A-Z])?$/.test(c.company.trim()) ? normalizeTicker(c.company.trim()) : null;
+    const ticker = c.ticker ?? asTicker ?? postTickers(c.quote)[0] ?? null;
+    return { ...c, ticker, company: asTicker && asTicker === ticker ? null : c.company };
+  });
 
   // 2. A ticker on another company's claim.
   for (const c of claims) {

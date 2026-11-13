@@ -420,6 +420,20 @@ describe('5. evidence must match the measure', () => {
     expect(r.claims[0]!.reason).toContain('No stock ticker found for SoftBank');
     expect(r.claims[1]!.reason).toContain('No stock ticker found for SoftBank');
   });
+
+  it('keeps the ticker when the company is given as the cashtag ($NVDA)', async () => {
+    const titles: Record<string, string> = { NVDA: 'NVIDIA CORP', CRWV: 'CoreWeave, Inc.', NBIS: 'Nebius Group N.V.', MU: 'MICRON TECHNOLOGY INC' };
+    const directory: CompanyDirectory = { titleOf: async (t) => titles[t] ?? null, findByName: async () => null };
+    const claims = [
+      ex({ quote: '$NVDA dropping to $163', type: 'prediction', ticker: 'NVDA', company: '$NVDA' }),
+      ex({ quote: '$CRWV is a $153 stock trading at $61', type: 'other', ticker: 'CRWV', company: '$CRWV' }),
+      ex({ quote: '$NBIS is a $335 stock trading at $134', type: 'other', ticker: 'NBIS', company: 'NBIS' }),
+      ex({ quote: '$MU is a $2025 stock trading at $810', type: 'other', ticker: 'MU', company: '$MU' }),
+    ];
+    const r = await checkPost('post', { ...deps(stub(claims)), directory });
+    expect(r.claims.map((c) => c.claim.ticker)).toEqual(['NVDA', 'CRWV', 'NBIS', 'MU']);
+    expect(r.claims.map((c) => c.reason).join(' ')).not.toContain('No stock ticker found');
+  });
 });
 
 describe('6. coverage and extraction gaps', () => {

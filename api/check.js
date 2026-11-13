@@ -559,7 +559,11 @@ async function assignTickers(extracted, text, directory) {
     return titles.get(t);
   };
   const byName = async (name) => directory ? directory.findByName(name).catch(() => null) : null;
-  const claims = extracted.map((c) => ({ ...c, ticker: c.ticker ?? postTickers(c.quote)[0] ?? null }));
+  const claims = extracted.map((c) => {
+    const asTicker = c.company && /^\$?[A-Z]{1,5}(?:[.-][A-Z])?$/.test(c.company.trim()) ? normalizeTicker(c.company.trim()) : null;
+    const ticker = c.ticker ?? asTicker ?? postTickers(c.quote)[0] ?? null;
+    return { ...c, ticker, company: asTicker && asTicker === ticker ? null : c.company };
+  });
   for (const c of claims) {
     if (!c.ticker || !c.company) continue;
     const title = await titleOf(c.ticker);
