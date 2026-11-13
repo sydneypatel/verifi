@@ -4,7 +4,7 @@ import type { Evaluation, EvidenceSource } from '../types';
 import { SecClient, filingUrl } from './client';
 import { filingLabel } from './figureSource';
 import { newestFiling, type EarningsReleases } from './releases';
-import { isQuarter, isYear, latestNamedQuarter, notFiledYet, onFileBy, periodWords as reportedWords, quarterAfter, yearAfter } from './periods';
+import { isYear, namedQuarters, notFiledYet, upcomingNamedQuarter, onFileBy, periodWords as reportedWords, quarterAfter, yearAfter } from './periods';
 import { REVENUE_CONCEPTS, growthBases, summarizeRevenue } from './revenueFacts';
 import { buildSeries } from './series';
 
@@ -51,7 +51,10 @@ function figuresFor(bases: GrowthBasis[]): EvidenceFigure[] {
  * The quarter and year the claim is about, and why there may be none.
  * With a post date, "the latest" means the latest reported by that day.
  */
-function referencePeriods(claim: Claim, evidence: RevenueEvidence): { q?: ReportedPeriod; y?: ReportedPeriod; named: boolean; stop?: string } {
+function referencePeriods(
+  claim: Claim,
+  evidence: RevenueEvidence,
+): { options: Array<{ q?: ReportedPeriod; y?: ReportedPeriod }>; named: boolean; stop?: string } {
   const all = { quarters: evidence.quarters ?? [], years: evidence.years ?? [] };
   const quarters = onFileBy(all.quarters, claim.postedAt);
   const years = onFileBy(all.years, claim.postedAt);
@@ -60,22 +63,24 @@ function referencePeriods(claim: Claim, evidence: RevenueEvidence): { q?: Report
     const newest = all.quarters[0] ?? all.years[0];
     return `SEC data for ${evidence.ticker} doesn't include ${named}.${newest ? ` The most recent period on file is ${reportedWords(newest)}.` : ''}`;
   };
+  // A named quarter can be a fiscal or a calendar label: each reading is an option.
+  const withYear = (qs: ReportedPeriod[]) => qs.map((q) => ({ q, y: years.find((p) => p.end <= q.end) }));
 
   if (claim.fiscalQuarter && claim.fiscalYear) {
-    const q = all.quarters.find((p) => isQuarter(p, claim.fiscalYear!, claim.fiscalQuarter!));
-    if (!q) return { named: true, stop: missing(`Q${claim.fiscalQuarter} ${claim.fiscalYear}`, quarterAfter(all.quarters[0], claim.fiscalYear, claim.fiscalQuarter)) };
-    return { q, y: years.find((p) => p.end <= q.end), named: true };
+    const qs = namedQuarters(all.quarters, claim.fiscalQuarter, claim.fiscalYear, claim.quote);
+    if (!qs.length) return { options: [], named: true, stop: missing(`Q${claim.fiscalQuarter} ${claim.fiscalYear}`, quarterAfter(all.quarters[0], claim.fiscalYear, claim.fiscalQuarter)) };
+    return { options: withYear(qs), named: true };
   }
   if (claim.fiscalQuarter) {
-    const q = latestNamedQuarter(quarters, claim.fiscalQuarter);
-    if (q) return { q, y: years.find((p) => p.end <= q.end), named: true };
+    const qs = namedQuarters(quarters, claim.fiscalQuarter, null, claim.quote);
+    if (qs.length) return { options: withYear(qs), named: true };
   }
   if (claim.fiscalYear && claim.period !== 'quarter') {
     const y = all.years.find((p) => isYear(p, claim.fiscalYear!));
-    if (!y) return { named: true, stop: missing(`fiscal year ${claim.fiscalYear}`, yearAfter(all.years[0], claim.fiscalYear)) };
-    return { y, named: true };
+    if (!y) return { options: [], named: true, stop: missing(`fiscal year ${claim.fiscalYear}`, yearAfter(all.years[0], claim.fiscalYear)) };
+    return { options: [{ y }], named: true };
   }
-  return { q: quarters[0], y: years[0], named: Boolean(claim.postedAt) };
+  return { options: [{ q: quarters[0], y: years[0] }], named: Boolean(claim.postedAt) };
 }
 
 /**
@@ -97,13 +102,43 @@ export function evaluateRevenueClaim(claim: Claim, evidence: RevenueEvidence): E
   }
 
   // Older cached evidence has only the latest bases.
-  let bases = evidence.bases;
-  if (evidence.quarters?.length || evidence.years?.length) {
-    const ref = referencePeriods(claim, evidence);
-    if (ref.stop) return { verdict: 'cant_check', reason: ref.stop };
-    bases = growthBases(evidence.quarters, evidence.years, ref.q, ref.y, ref.named ? 'named' : 'latest');
+  if (!evidence.quarters?.length && !evidence.years?.length) return compareGrowth(claim, evidence.bases);
+  const ref = referencePeriods(claim, evidence);
+  if (ref.stop) return { verdict: 'cant_check', reason: ref.stop };
+  // When the label could mean more than one quarter, the reading that fits best counts.
+  const results = ref.options.map((o) => compareGrowth(claim, growthBases(evidence.quarters, evidence.years, o.q, o.y, ref.named ? 'named' : 'latest')));
+  const best = results.reduce((a, b) => (RANK[b.verdict] > RANK[a.verdict] ? b : a));
+  if (best.verdict !== 'contradicted') return best;
+  const upcoming = claim.fiscalQuarter && !claim.fiscalYear ? upcomingNamedQuarter(evidence.quarters ?? [], claim.fiscalQuarter) : null;
+  if (upcoming) {
+    return { verdict: 'cant_check', reason: `${notFiledYet(upcoming, evidence.quarters?.[0], evidence.ticker)} The post is likely about ${upcoming}, not the Q${claim.fiscalQuarter} a year earlier.` };
   }
+  // "Trailing revenue", "in 12 months", "from $28.6B to $303B": spans the filings don't have.
+  if (TRAILING.test(claim.quote) || (!ref.named && FROM_TO.test(claim.quote))) {
+    return {
+      verdict: 'cant_check',
+      reason: `The post measures growth over a span that isn't a filed quarter or fiscal year (trailing twelve months, or between two figures it doesn't date), so it can't be matched to the filings. ${best.reason.replace(/ The post says [^.]*\.$/, '')}`,
+    };
+  }
+  if (ref.named || claim.claimedPercent === null) return best;
 
+  // No period and no post date: "the latest quarter" is only a guess. A figure
+  // that matches an earlier quarter is more likely an older post than a false one.
+  for (const q of (evidence.quarters ?? []).slice(1, 13)) {
+    const y = (evidence.years ?? []).find((p) => p.end <= q.end);
+    const older = compareGrowth(claim, growthBases(evidence.quarters, evidence.years, q, y, 'named'));
+    if (older.verdict === 'holds_up') {
+      return { verdict: 'cant_check', reason: `${older.reason} The post has no date, so it may be about that quarter. Add the post's date to check it against the latest figures at the time.` };
+    }
+  }
+  return best;
+}
+
+const RANK: Record<Evaluation['verdict'], number> = { holds_up: 3, misleading: 2, contradicted: 1, cant_check: 0 };
+const TRAILING = /\btrailing\b|\bttm\b|\b(?:last|past|in|over)\s+(?:the\s+)?(?:12|twelve)\s+months\b/i;
+const FROM_TO = /\bfrom\s+\$?\d[\d.,]*\s*(?:[kmbt]|million|billion|trillion)?\w*\s+to\s+\$?\d/i;
+
+function compareGrowth(claim: Claim, bases: GrowthBasis[]): Evaluation {
   const wanted = namedBases(claim);
   const targets = wanted.map((id) => bases.find((b) => b.id === id)).filter((b): b is GrowthBasis => Boolean(b));
   const primary = targets[0];

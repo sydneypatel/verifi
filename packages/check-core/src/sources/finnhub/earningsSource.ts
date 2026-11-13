@@ -12,6 +12,10 @@ export const IN_LINE = 0.005;
 export const EPS_TIGHT_DOLLARS = 0.01;
 export const EPS_TIGHT_RELATIVE = 0.03;
 export const EPS_LOOSE_RELATIVE = 0.15;
+
+// A post about the reported (GAAP) figure or a one-time item, or a "miss" in scare quotes.
+const GAAP_TALK =
+  /\b(?:one[- ]time|(?:non[- ])?gaap|adjusted|clean|excluding|charges?|settlement|write[- ]?(?:downs?|offs?)|impairments?|non[- ]?recurring|special items?)\b|["“”'‘’](?:beat|miss(?:ed)?)["“”'‘’]/i;
 /** "Beat by 20%": the stated surprise. */
 export const SURPRISE_TIGHT_POINTS = 2;
 export const SURPRISE_TIGHT_RELATIVE = 0.2;
@@ -53,7 +57,12 @@ function targetOf(claim: Claim, quarters: EarningsQuarter[]): EarningsQuarter | 
   // The company's own label first; the calendar quarter only as a fallback.
   const fiscal = reported.find((q) => q.fiscalQuarter === claim.fiscalQuarter && (!claim.fiscalYear || q.fiscalYear === claim.fiscalYear));
   if (fiscal) return fiscal;
-  return reported.find((q) => {
+  return calendarTarget(claim, quarters);
+}
+
+/** The reported quarter that is the calendar quarter the claim names. */
+function calendarTarget(claim: Claim, quarters: EarningsQuarter[]): EarningsQuarter | undefined {
+  return quarters.filter((q) => q.actual !== null).find((q) => {
     const quarter = Math.ceil(Number(q.period.slice(5, 7)) / 3);
     return quarter === claim.fiscalQuarter && (!claim.fiscalYear || Number(q.period.slice(0, 4)) === claim.fiscalYear);
   });
@@ -76,6 +85,16 @@ function afterNewest(claim: Claim, quarters: EarningsQuarter[]): boolean {
 
 /** Pure comparison of an earnings claim with reported EPS and estimates. */
 export function evaluateEarningsClaim(claim: Claim, evidence: EarningsEvidence): Evaluation {
+  // "Q2 2026" can be the fiscal or the calendar quarter: the reading that fits best counts.
+  const calendar = claim.fiscalQuarter && !/\bfiscal\b|\bFY\s?'?\d/i.test(claim.quote) ? calendarTarget(claim, evidence.quarters) : undefined;
+  const first = evaluateOne(claim, evidence);
+  if (!calendar || calendar === targetOf(claim, evidence.quarters) || !calendar.fiscalQuarter || !calendar.fiscalYear) return first;
+  const second = evaluateOne({ ...claim, fiscalQuarter: calendar.fiscalQuarter, fiscalYear: calendar.fiscalYear }, evidence);
+  const fit: Record<Verdict, number> = { holds_up: 3, misleading: 2, contradicted: 1, cant_check: 0 };
+  return fit[second.verdict] > fit[first.verdict] ? second : first;
+}
+
+function evaluateOne(claim: Claim, evidence: EarningsEvidence): Evaluation {
   // "EPS up 40% YoY" is growth. A beat against estimates says nothing about it.
   if (claim.vsEstimate === null && claim.claimedAmount === null && claim.claimedPercent !== null) {
     return { verdict: 'cant_check', reason: "This is about EPS growth, not a beat or miss. Verifi checks EPS against analyst estimates, and doesn't check EPS growth yet." };
@@ -106,7 +125,13 @@ export function evaluateEarningsClaim(claim: Claim, evidence: EarningsEvidence):
     else if (claim.vsEstimate === outcome) parts.push({ verdict: 'holds_up', lead: '' });
     else if (outcome === 'in_line') parts.push({ verdict: 'misleading', lead: `Earnings matched the estimate; they did not ${claim.vsEstimate === 'beat' ? 'beat' : 'miss'} it.` });
     else if (claim.vsEstimate === 'in_line') parts.push({ verdict: 'misleading', lead: `Earnings ${outcome === 'beat' ? 'beat' : 'missed'} the estimate rather than matching it.` });
-    else parts.push({ verdict: 'contradicted', lead: `Earnings ${outcome === 'beat' ? 'beat' : 'missed'} the estimate. The post says they ${claim.vsEstimate === 'beat' ? 'beat' : 'missed'} it.` });
+    else if (GAAP_TALK.test(claim.quote)) {
+      // "The 'miss' was a one-time charge": the post is about the GAAP figure, the estimates are adjusted.
+      parts.push({
+        verdict: 'cant_check',
+        lead: `On the adjusted figures analysts use, earnings ${outcome === 'beat' ? 'beat' : 'missed'} the estimate. The post is about the reported (GAAP) figure or a one-time item, which these estimates leave out, so the two can't be compared.`,
+      });
+    } else parts.push({ verdict: 'contradicted', lead: `Earnings ${outcome === 'beat' ? 'beat' : 'missed'} the estimate. The post says they ${claim.vsEstimate === 'beat' ? 'beat' : 'missed'} it.` });
 
     // "Beat by 20%": how big the surprise was.
     if (claim.claimedPercent !== null && q.surprisePercent !== null && outcome && outcome !== 'in_line') {
@@ -141,7 +166,10 @@ export function evaluateEarningsClaim(claim: Claim, evidence: EarningsEvidence):
   }
 
   const worst = parts.reduce((a, b) => (RANK[b.verdict] > RANK[a.verdict] ? b : a));
-  if (worst.verdict === 'cant_check') return { verdict: 'cant_check', reason: `${facts} There is no estimate to compare the post with.` };
+  if (worst.verdict === 'cant_check') {
+    const why = parts.map((p) => p.lead).filter(Boolean).join(' ');
+    return { verdict: 'cant_check', reason: why ? `${why} ${facts}${BASIS_NOTE}` : `${facts} There is no estimate to compare the post with.` };
+  }
   const lead = parts.filter((p) => p.lead && p.verdict === worst.verdict).map((p) => p.lead).join(' ');
   return { verdict: worst.verdict, reason: `${lead ? `${lead} ` : ''}${facts}${BASIS_NOTE}` };
 }

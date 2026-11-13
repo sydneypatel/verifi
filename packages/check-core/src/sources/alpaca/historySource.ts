@@ -166,6 +166,11 @@ export function measureHistory(
       } else {
         const top = bars.slice(0, end + 1).reduce((a, b) => (b.high > a.high ? b : a));
         evidence.high = { price: top.high, date: top.date, scope: 'history', complete };
+        const yearAgo = addDays(e.date, -365);
+        if (claim.reference === 'high' && first.date <= yearAgo) {
+          const top52 = bars.slice(0, end + 1).filter((b) => b.date > yearAgo).reduce((a, b) => (b.high > a.high ? b : a));
+          if (top52.high < top.high) evidence.high52 = { price: top52.high, date: top52.date, scope: '52_week', complete: true };
+        }
       }
     }
   } else if (claim.claimedPercent !== null || claim.direction !== null) {
@@ -235,6 +240,17 @@ export function evaluatePriceHistoryClaim(claim: Claim, e: PriceHistoryEvidence)
     const h = e.high;
     const claimed = claim.claimedPercent;
     if (claimed === null) return { verdict: 'cant_check', reason: "The post doesn't say how far from the high, so there is nothing to compare." };
+    // "Its high" with no span: the 52-week high counts as well as the all-time one.
+    if (e.high52) {
+      const h52 = e.high52;
+      const below52 = ((h52.price - e.session.close) / h52.price) * 100;
+      if (agrees(claimed, below52)) {
+        return {
+          verdict: 'holds_up',
+          reason: `${name} ${closed(e)} ${formatPrice(e.session.close)} on ${day}, ${formatPercentMagnitude(below52)} below its 52-week high of ${formatPrice(h52.price)} on ${formatDate(h52.date)}.${posted}${still(e)}`,
+        };
+      }
+    }
     const below = ((h.price - e.session.close) / h.price) * 100;
     const nearest = ((h.price - e.session.high) / h.price) * 100;
     const farthest = ((h.price - e.session.low) / h.price) * 100;

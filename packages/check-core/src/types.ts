@@ -234,6 +234,8 @@ export interface PriceHistoryEvidence extends EvidenceBase {
   move?: { label: string; from: PricePoint; to: PricePoint; percent: number; lowPercent: number; highPercent: number };
   /** The highest price on record before the session. scope "52_week", or "history" (since firstDate). */
   high?: { price: number; date: string; scope: '52_week' | 'history'; complete: boolean };
+  /** For "its high" with no span: the 52-week high too, since the post may mean either. */
+  high52?: { price: number; date: string; scope: '52_week'; complete: true };
   /** A pre-market or after-hours move. */
   extended?: { kind: Session; base: PricePoint; last: PricePoint; percent: number; lowPercent: number; highPercent: number };
   /** Market value on the session, estimated from today's value and the price change since. */

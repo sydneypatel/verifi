@@ -30,6 +30,32 @@ lookup. The cache is in memory today; put it in Postgres (Supabase) once there i
 than one server instance. LLM extraction is not cached yet; cache it by a hash of the
 post text when volume makes it worth it.
 
+## When in doubt, "can't be checked"
+
+A wrong "Contradicted" costs more trust than a "can't be checked": a reader who knows the post
+is true stops believing every verdict. So a mismatch that rests on a guess is never shown as
+Contradicted. Found by replaying 94 saved posts (73 Contradicted verdicts, most of them false):
+
+| The guess | What happens now |
+|---|---|
+| No post date, so "today" or "this week" means the day of the check | Can't be checked, with the numbers, and a prompt to add the post's date |
+| A date from Reddit's rounded age ("13d ago"), which can be a day late | Same, for moves over a month or less |
+| "Monday's closes" in a post from Wednesday | The move is checked on that Monday |
+| "Over the past month", "in one month" | A rolling 30 days, not month to date |
+| "Q1 2025" can be fiscal or calendar | Every reading is tried; the best fit counts. "Fiscal" or "FY" means fiscal only |
+| "Q3" with no year, when the next quarter to be filed is a Q3 | Not filed yet, rather than last year's Q3 |
+| A quarter from an earnings release carries no fiscal label | Labelled from the quarter before it |
+| No period and no date, and the figure matches an earlier quarter | Can't be checked: likely an older post |
+| Trailing twelve months, or "from $X to $Y" with no dates | Can't be checked: not a filed period |
+| A bare figure next to a year two or more years back | Can't be checked rather than tested against that old year |
+| Net income, capex, cash flow, RPO, prices, impressions | Never checked as revenue growth |
+| Guidance, full-year figures, "$1.1B below expectations" | Not compared with the quarterly consensus |
+| A "miss" explained by a one-time or GAAP item | Can't be checked against adjusted estimates |
+| Non-GAAP dollar figures | Can't be checked against GAAP filings |
+| "Its $46.75 high" | The 52-week high counts as well as the all-time high |
+| "The S&P", "the Nasdaq" | The index's ETF (SPY, QQQ), never S&P Global |
+| What an investment would be worth; a past calendar year's move | Can't be checked as a price move |
+
 ## Verdict rules for revenue claims
 
 Thresholds are constants at the top of `sources/sec/revenueSource.ts`. They are a first

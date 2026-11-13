@@ -103,7 +103,16 @@ function parsePostDate(input, now) {
   return null;
 }
 var DATE_LINE_NOISE = /^(?:\d{1,2}:\d{2}(?::\d{2})?\s?(?:am|pm)?(?:\s?[a-z]{2,4})?|\d+(?:[.,]\d+)?[km]?\s+views?|edited|posted(?: on)?|sent|from \w+)$/i;
+function redditAge(text, now) {
+  const head = text.split(/\n/).map((l) => l.trim()).filter(Boolean).slice(0, 6);
+  if (!head.some((l) => /^r\/\w+$/i.test(l))) return null;
+  const age = head.map((l) => l.replace(/^[·•]\s*/, "")).find((l) => /^\d+\s?(?:m|min|h|hr|d|w)\s+ago$/i.test(l));
+  const day = age ? parsePostDate(age, now) : null;
+  return day ? { day, approximate: /\d\s?[dw]\s/i.test(age) } : null;
+}
 function postDateInText(text, now) {
+  const reddit = redditAge(text, now);
+  if (reddit) return reddit.day;
   const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
   const candidates = [...lines.slice(-3).reverse(), ...lines.slice(0, 3)];
   for (const line of candidates) {
@@ -201,7 +210,15 @@ function isPersonal(quote) {
 }
 var EARNINGS_WORDS = /\b(?:earnings|eps|per share|profit|bottom line|results|numbers|estimates|expectations|consensus|the street)\b/i;
 var OTHER_MEASURE = /\b(?:revenue|revenues|sales|top line|guidance|outlook|forecast|margin|margins|cash flow|fcf|users|subscribers|deliveries|bookings)\b/i;
+var REVENUE_WORDS = /\b(?:revenues?|sales|top[- ]?line|turnover)\b/i;
+var NOT_REVENUE = /\b(?:net income|income|profits?|earnings|eps|capex|capital expenditures?|spending|cash flow|fcf|rpo|remaining performance|backlog|bookings|impressions|prices?|pricing|users|subscribers|deliveries|shipments|margins?|ebitda|dau|mau|arpu|units|volumes?|headcount|orders)\b/i;
+var SLOWED = /\b(?:slow(?:ed|ing|s)?|decelerat\w*|cool(?:ed|ing)|moderat\w*)\b/i;
+var FELL = /\b(?:fell|fall(?:ing|s)?|declin\w*|drop\w*|shr[aiu]nk\w*|contract\w*|down)\b/i;
 var NOT_A_SEGMENT = /^(?:total|overall|company|consolidated|revenue|revenues|sales|net sales|top line|headline|group|all)$/i;
+function referenceOf(ref, quote) {
+  if (ref === "high_all_time" && !/\ball[- ]time\b|\brecord\b|\bever\b|\bath\b|\bpeak\b/i.test(quote)) return "high";
+  return ref;
+}
 function asString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -227,8 +244,10 @@ function normalizeClaims(raw) {
     let type = oneOf(row.type, CLAIM_TYPES) ?? "other";
     if (type !== "prediction" && type !== "consensus_estimate" && UPSIDE.test(quote)) type = "prediction";
     else if (type !== "personal" && isPersonal(quote)) type = "personal";
+    if (type === "revenue_growth" && !REVENUE_WORDS.test(quote) && NOT_REVENUE.test(quote)) type = "other";
     const percent = asNumber(row.claimedPercent);
-    const direction = oneOf(row.direction, ["up", "down"]);
+    let direction = oneOf(row.direction, ["up", "down"]);
+    if (type === "revenue_growth" && direction === "down" && SLOWED.test(quote) && !FELL.test(quote)) direction = "up";
     const period = oneOf(row.period, ["quarter", "year"]);
     let metric = METRIC_TYPES.includes(type) ? oneOf(row.metric, METRICS) ?? (type === "earnings_result" ? "eps" : "other") : null;
     if (type === "consensus_estimate" && metric !== "revenue" && metric !== "eps") {
@@ -264,7 +283,7 @@ function normalizeClaims(raw) {
       window,
       windowDays: days !== null && days > 0 ? Math.round(days) : null,
       session: type === "price_move" || type === "earnings_date" ? oneOf(row.session, SESSIONS) : null,
-      reference: type === "price_move" ? oneOf(row.reference, PRICE_REFERENCES) : null,
+      reference: type === "price_move" ? referenceOf(oneOf(row.reference, PRICE_REFERENCES), quote) : null,
       comparison: type === "revenue_growth" || type === "earnings_result" ? oneOf(row.comparison, COMPARISONS) : null,
       segment: segment && !NOT_A_SEGMENT.test(segment) ? segment : null,
       eventDate: type === "earnings_date" ? asString(row.eventDate)?.slice(0, 40) ?? null : null,
@@ -273,6 +292,318 @@ function normalizeClaims(raw) {
     if (claims.length >= MAX_CLAIMS) break;
   }
   return claims;
+}
+
+// ../../packages/check-core/src/format.ts
+var MONTHS2 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function formatDate(iso3) {
+  const [y, m, d] = iso3.split("-").map(Number);
+  if (!y || !m || !d) return iso3;
+  return `${MONTHS2[m - 1]} ${d}, ${y}`;
+}
+function formatUsd(value) {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1e12) return `${sign}$${trim(abs / 1e12)}T`;
+  if (abs >= 1e9) return `${sign}$${trim(abs / 1e9)}B`;
+  if (abs >= 1e6) return `${sign}$${trim(abs / 1e6)}M`;
+  if (abs >= 1e3) return `${sign}$${trim(abs / 1e3)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
+}
+function trim(n) {
+  if (n < 10) return n.toFixed(2).replace(/\.?0+$/, "");
+  return n.toFixed(1).replace(/\.0$/, "");
+}
+function formatPercentMagnitude(percent) {
+  const abs = Math.abs(percent);
+  return abs >= 100 ? `${abs.toFixed(0)}%` : `${abs.toFixed(1)}%`;
+}
+function formatSignedPercent(percent) {
+  return `${percent >= 0 ? "+" : "-"}${formatPercentMagnitude(percent)}`;
+}
+function formatPerShare(value) {
+  return `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(2)}`;
+}
+function formatPrice(value) {
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function formatTime(iso3) {
+  const date = new Date(iso3);
+  if (Number.isNaN(date.getTime())) return iso3;
+  const text = date.toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+  return `${text} ET`;
+}
+function describeChange(percent) {
+  return `${percent >= 0 ? "up" : "down"} ${formatPercentMagnitude(percent)}`;
+}
+
+// ../../packages/check-core/src/sources/finnhub/marketSource.ts
+var PRICE_TOLERANCE = 0.1;
+var PRICE_MIN_POINTS = 0.5;
+var PRICE_LOOSE = 0.25;
+var CAP_TIGHT = 0.1;
+var CAP_LOOSE = 0.25;
+var WINDOWS = ["day", "week", "month", "ytd", "year"];
+var WINDOW_WORDS = {
+  day: "today",
+  week: "over the past 5 trading days",
+  month: "so far this month",
+  ytd: "so far this year",
+  year: "over the past 52 weeks"
+};
+var METRIC_FIELD = {
+  week: "5DayPriceReturnDaily",
+  month: "monthToDatePriceReturnDaily",
+  ytd: "yearToDatePriceReturnDaily",
+  year: "52WeekPriceReturnDaily"
+};
+var MAX_LAG_DAYS = { day: 0, week: 0, price: 0, high: 1, month: 1, ytd: 3, year: 3 };
+var STALE_NOTE = " Prices move all day, so the post may have been right when it was written.";
+var agrees = (claimed, actual, margin = PRICE_TOLERANCE) => Math.abs(claimed - actual) <= Math.max(Math.abs(claimed) * margin, PRICE_MIN_POINTS);
+function moveText(evidence, w) {
+  return `${describeChange(evidence.returns[w])} ${WINDOW_WORDS[w]}`;
+}
+function windowForDays(days) {
+  if (days === 1) return "day";
+  if (days === 5 || days === 7) return "week";
+  if (days >= 360 && days <= 366) return "year";
+  return null;
+}
+function staleReason(claim, evidence, kind, what) {
+  if (!claim.postedAt) return null;
+  const readDay = newYorkDate(new Date(evidence.readAt));
+  const lag = daysBetween(claim.postedAt, readDay);
+  if (lag <= MAX_LAG_DAYS[kind]) return null;
+  return `The post is from ${formatDate(claim.postedAt)}, but the market data shows ${evidence.ticker} as of ${formatDate(readDay)}, so ${what} on the post's date can't be checked.`;
+}
+function claimedWords(claim, claimed) {
+  const b = claim.bound === "at_least" ? "more than " : claim.bound === "at_most" ? "less than " : "";
+  return `${b}${formatPercentMagnitude(claimed)} ${claim.direction === "down" ? "drop" : "gain"}`;
+}
+function evaluateFromHigh(claim, evidence) {
+  if (claim.reference === "high_all_time") {
+    return { verdict: "cant_check", reason: "The market data only goes back 52 weeks, so a move from the all-time high can't be checked." };
+  }
+  const high = evidence.high52Week;
+  if (!high || evidence.price === null || claim.claimedPercent === null) {
+    return { verdict: "cant_check", reason: `No 52-week high found for ${evidence.ticker}.` };
+  }
+  const stale = staleReason(claim, evidence, "high", "the distance from the high");
+  if (stale) return { verdict: "cant_check", reason: stale };
+  const below = (high.price - evidence.price) / high.price * 100;
+  const when = high.date ? `, reached ${formatDate(high.date)}` : "";
+  const actualText = `${evidence.entityName} stock is ${formatPrice(evidence.price)}, ${formatPercentMagnitude(below)} below its 52-week high of ${formatPrice(high.price)}${when} (as of ${formatTime(evidence.readAt)}).`;
+  const claimed = claim.claimedPercent;
+  if (agrees(claimed, below)) return { verdict: "holds_up", reason: actualText };
+  if (claim.reference === "high" && claimed > below) {
+    return {
+      verdict: "cant_check",
+      reason: `${actualText} The post may mean an older high than the past 52 weeks, which the market data doesn't cover.`
+    };
+  }
+  if (agrees(claimed, below, PRICE_LOOSE)) {
+    return { verdict: "misleading", reason: `Close, but ${claimed > below ? "overstated" : "understated"}. ${actualText}${STALE_NOTE}` };
+  }
+  return { verdict: "contradicted", reason: `${actualText} The post says ${formatPercentMagnitude(claimed)} below the high.${STALE_NOTE}` };
+}
+function evaluatePrice(claim, evidence) {
+  const claimed = claim.claimedAmount;
+  if (evidence.price === null) return { verdict: "cant_check", reason: `No current price found for ${evidence.ticker}.` };
+  const stale = staleReason(claim, evidence, "price", "the share price");
+  if (stale) return { verdict: "cant_check", reason: stale };
+  const actualText = `${evidence.entityName} stock is ${formatPrice(evidence.price)} (as of ${formatTime(evidence.readAt)}).`;
+  const gap = Math.abs(claimed - evidence.price) / claimed;
+  if (gap <= PRICE_TOLERANCE) return { verdict: "holds_up", reason: actualText };
+  if (gap <= PRICE_LOOSE) return { verdict: "misleading", reason: `Close, but ${claimed > evidence.price ? "overstated" : "understated"}. ${actualText}${STALE_NOTE}` };
+  return { verdict: "contradicted", reason: `${actualText} The post says ${formatPrice(claimed)}.${STALE_NOTE}` };
+}
+function claimWindow(claim, evidence, available) {
+  const all = available.map((w) => moveText(evidence, w)).join(", ");
+  const context = all ? ` For reference, ${evidence.entityName} stock is ${all} (as of ${formatTime(evidence.readAt)}).` : "";
+  if (claim.window) return { window: claim.window };
+  if (claim.windowDays !== null) {
+    if (claim.windowDays > 366) return { reason: `The market data only goes back 52 weeks, so a move over a longer span can't be checked.` };
+    const w = windowForDays(claim.windowDays);
+    if (w) return { window: w };
+    return { reason: `The market data has changes for today, 5 trading days, this month, this year and 52 weeks, not ${claim.windowDays} days.${context}` };
+  }
+  return { reason: `The post doesn't say over what period, so there is no change to compare.${context}` };
+}
+function evaluatePriceMove(claim, evidence) {
+  if (claim.session) {
+    const when = claim.session === "pre_market" ? "Pre-market" : "After-hours";
+    return { verdict: "cant_check", reason: `${when} prices aren't in the market data, which covers regular trading hours only.` };
+  }
+  if (claim.reference) return evaluateFromHigh(claim, evidence);
+  if (claim.claimedPercent === null && claim.direction === null) {
+    if (claim.claimedAmount !== null) return evaluatePrice(claim, evidence);
+    return { verdict: "cant_check", reason: "The post doesn't say how the price moved, so there is nothing to compare." };
+  }
+  const available = WINDOWS.filter((w) => typeof evidence.returns[w] === "number");
+  if (available.length === 0) return { verdict: "cant_check", reason: `No recent price changes found for ${evidence.ticker}.` };
+  const resolved = claimWindow(claim, evidence, available);
+  if ("reason" in resolved) return { verdict: "cant_check", reason: resolved.reason };
+  const named = resolved.window;
+  if (!available.includes(named)) {
+    const early = named === "month" ? " Early in a month the month-to-date figure isn't reliable yet." : "";
+    return { verdict: "cant_check", reason: `The market data doesn't include ${evidence.ticker}'s change ${WINDOW_WORDS[named]}.${early}` };
+  }
+  const stale = staleReason(claim, evidence, named, `a move ${WINDOW_WORDS[named]}`);
+  if (stale) return { verdict: "cant_check", reason: stale };
+  const at = `as of ${formatTime(evidence.readAt)}`;
+  const sign = claim.direction === "down" ? -1 : 1;
+  const actualText = (w) => `${evidence.entityName} stock is ${moveText(evidence, w)} (${at}).`;
+  const actual = evidence.returns[named];
+  if (claim.claimedPercent === null) {
+    const same = Math.sign(actual) === sign || actual === 0;
+    return { verdict: same ? "holds_up" : "contradicted", reason: `${actualText(named)}${same ? "" : STALE_NOTE}` };
+  }
+  const claimed = sign * claim.claimedPercent;
+  const claimedText = claimedWords(claim, claim.claimedPercent);
+  const margin = (c) => Math.max(Math.abs(c) * PRICE_TOLERANCE, PRICE_MIN_POINTS);
+  const tight = (w) => {
+    const r = evidence.returns[w];
+    if (claim.bound === "at_least") return sign * r >= claim.claimedPercent - margin(claimed);
+    if (claim.bound === "at_most") return sign * r <= claim.claimedPercent + margin(claimed) && Math.sign(r) !== -sign;
+    return agrees(claimed, r);
+  };
+  if (tight(named)) return { verdict: "holds_up", reason: actualText(named) };
+  const other = available.find((w) => w !== named && tight(w));
+  if (other) {
+    return {
+      verdict: "misleading",
+      reason: `A ${claimedText} matches the change ${WINDOW_WORDS[other]}, not ${WINDOW_WORDS[named]}. ${actualText(named)}`
+    };
+  }
+  if (Math.sign(actual) === sign && agrees(claimed, actual, PRICE_LOOSE)) {
+    const how = Math.abs(claimed) > Math.abs(actual) ? "overstated" : "understated";
+    return { verdict: "misleading", reason: `Close, but ${how}. ${actualText(named)}${STALE_NOTE}` };
+  }
+  return { verdict: "contradicted", reason: `${actualText(named)} The post says a ${claimedText} ${WINDOW_WORDS[named]}.${STALE_NOTE}` };
+}
+function evaluateCapChange(claim, evidence) {
+  const claimed = claim.claimedAmount;
+  if (evidence.marketCap === null) return { verdict: "cant_check", reason: `No market value found for ${evidence.ticker}.` };
+  const available = WINDOWS.filter((w) => typeof evidence.returns[w] === "number");
+  const resolved = claimWindow(claim, evidence, available);
+  if ("reason" in resolved) return { verdict: "cant_check", reason: resolved.reason.replace("no change to compare", "no change in value to compare") };
+  const named = resolved.window;
+  const r = evidence.returns[named];
+  if (typeof r !== "number") return { verdict: "cant_check", reason: `The market data doesn't include ${evidence.ticker}'s change ${WINDOW_WORDS[named]}.` };
+  const stale = staleReason(claim, evidence, named, `the change in value ${WINDOW_WORDS[named]}`);
+  if (stale) return { verdict: "cant_check", reason: stale };
+  const before = evidence.marketCap / (1 + r / 100);
+  const change = evidence.marketCap - before;
+  const verb = change < 0 ? "lost" : "gained";
+  const actualText = `${evidence.entityName} ${verb} about ${formatUsd(Math.abs(change))} in market value ${WINDOW_WORDS[named]} (${describeChange(r)} on a value of about ${formatUsd(evidence.marketCap)}, as of ${formatTime(evidence.readAt)}).`;
+  const claimedText = `${formatUsd(claimed)} ${claim.direction === "down" ? "wiped out" : "added"}`;
+  if (claim.direction === "down" !== change < 0) return { verdict: "contradicted", reason: `${actualText} The post says ${claimedText}.${STALE_NOTE}` };
+  const gap = Math.abs(claimed - Math.abs(change)) / claimed;
+  if (gap <= CAP_TIGHT) return { verdict: "holds_up", reason: actualText };
+  if (gap <= CAP_LOOSE) return { verdict: "misleading", reason: `Close, but ${claimed > Math.abs(change) ? "overstated" : "understated"}. ${actualText}${STALE_NOTE}` };
+  return { verdict: "contradicted", reason: `${actualText} The post says ${claimedText}.${STALE_NOTE}` };
+}
+function evaluateMarketCap(claim, evidence) {
+  const claimed = claim.claimedAmount;
+  if (claimed === null) return { verdict: "cant_check", reason: "The post doesn't give a market value to compare." };
+  if (claim.direction) return evaluateCapChange(claim, evidence);
+  if (evidence.marketCap === null) return { verdict: "cant_check", reason: `No market value found for ${evidence.ticker}.` };
+  const stale = staleReason(claim, evidence, "month", "the market value");
+  if (stale) return { verdict: "cant_check", reason: stale };
+  const actual = evidence.marketCap;
+  const actualText = `${evidence.entityName} is worth about ${formatUsd(actual)} (market value, ${"as of " + formatTime(evidence.readAt)}).`;
+  const b = claim.bound === "at_least" ? "more than " : claim.bound === "at_most" ? "less than " : "";
+  if (claim.bound) {
+    const ok = claim.bound === "at_least" ? actual >= claimed * (1 - CAP_TIGHT) : actual <= claimed * (1 + CAP_TIGHT);
+    return ok ? { verdict: "holds_up", reason: actualText } : { verdict: "contradicted", reason: `${actualText} The post says ${b}${formatUsd(claimed)}.` };
+  }
+  const gap = Math.abs(claimed - actual) / claimed;
+  if (gap <= CAP_TIGHT) return { verdict: "holds_up", reason: actualText };
+  if (gap <= CAP_LOOSE) {
+    return { verdict: "misleading", reason: `Close, but ${claimed > actual ? "overstated" : "understated"}. ${actualText}` };
+  }
+  return { verdict: "contradicted", reason: `${actualText} The post says ${formatUsd(claimed)}.` };
+}
+function evaluateMarketClaim(claim, evidence) {
+  return claim.type === "market_cap" ? evaluateMarketCap(claim, evidence) : evaluatePriceMove(claim, evidence);
+}
+function figuresFor(e) {
+  const rows = [];
+  if (e.price !== null) rows.push({ label: "Share price", value: formatPrice(e.price) });
+  for (const w of WINDOWS) {
+    const r = e.returns[w];
+    if (typeof r === "number") rows.push({ label: `Change ${WINDOW_WORDS[w]}`, value: formatSignedPercent(r) });
+  }
+  if (e.high52Week) rows.push({ label: "52-week high", value: formatPrice(e.high52Week.price) });
+  if (e.marketCap !== null) rows.push({ label: "Market value", value: formatUsd(e.marketCap) });
+  return rows;
+}
+function dayOfMonthInNewYork(iso3) {
+  return Number(new Date(iso3).toLocaleString("en-US", { timeZone: "America/New_York", day: "numeric" }));
+}
+var num = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+function createFinnhubMarketSource({ finnhub, now = () => /* @__PURE__ */ new Date() }) {
+  return {
+    id: "finnhub-market",
+    ttlMs: 5 * 60 * 1e3,
+    // Every price and market-value claim comes here, so each gets a specific
+    // answer (a verdict, or why it can't be checked) instead of "not connected".
+    supports: (claim) => claim.type === "price_move" || claim.type === "market_cap",
+    cacheKey: (claim) => `finnhub-market:${claim.ticker ?? ""}`,
+    emptyReason: (claim) => `No market data found for ${claim.ticker}. It may not trade on a US exchange.`,
+    async fetchEvidence(claim) {
+      if (!claim.ticker) return null;
+      const [quote, profile, metrics] = await Promise.all([
+        finnhub.quote(claim.ticker),
+        finnhub.profile(claim.ticker),
+        finnhub.metrics(claim.ticker)
+      ]);
+      if (!quote?.c && !profile?.name) return null;
+      const m = metrics?.metric ?? {};
+      const returns = {};
+      const day = num(quote?.dp);
+      if (day !== null && quote?.c) returns.day = day;
+      const readAt = quote?.t ? new Date(quote.t * 1e3).toISOString() : now().toISOString();
+      for (const [w, field] of Object.entries(METRIC_FIELD)) {
+        const value = num(m[field]);
+        if (value !== null) returns[w] = value;
+      }
+      if (dayOfMonthInNewYork(readAt) <= 7) delete returns.month;
+      const capMillions = num(profile?.marketCapitalization) ?? num(m["marketCapitalization"]);
+      const highPrice = num(m["52WeekHigh"]);
+      const highDate = typeof m["52WeekHighDate"] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(m["52WeekHighDate"]) ? m["52WeekHighDate"] : null;
+      const evidence = {
+        kind: "market",
+        sourceId: "finnhub-market",
+        ticker: claim.ticker,
+        entityName: profile?.name || claim.ticker,
+        asOf: readAt.slice(0, 10),
+        readAt,
+        price: quote?.c ? quote.c : null,
+        returns,
+        marketCap: capMillions === null ? null : capMillions * 1e6,
+        high52Week: highPrice !== null && highPrice > 0 ? { price: highPrice, date: highDate } : null,
+        figures: [],
+        citation: {
+          label: `Finnhub market data, ${formatTime(readAt)}`,
+          url: `https://finance.yahoo.com/quote/${encodeURIComponent(claim.ticker)}/`
+        }
+      };
+      evidence.figures = figuresFor(evidence);
+      return evidence;
+    },
+    evaluate(claim, evidence) {
+      if (evidence.kind !== "market") return { verdict: "cant_check", reason: "The data found does not match this claim." };
+      return evaluateMarketClaim(claim, evidence);
+    }
+  };
 }
 
 // ../../packages/check-core/src/sources/sec/client.ts
@@ -560,6 +891,8 @@ async function assignTickers(extracted, text, directory) {
   };
   const byName = async (name) => directory ? directory.findByName(name).catch(() => null) : null;
   const claims = extracted.map((c) => {
+    const index = indexEtf(c.company) ?? (c.ticker === "SPGI" && /\bS&P\b(?!\s+Global)/i.test(c.quote) ? "SPY" : null);
+    if (index) return { ...c, ticker: index, company: null };
     const asTicker = c.company && /^\$?[A-Z]{1,5}(?:[.-][A-Z])?$/.test(c.company.trim()) ? normalizeTicker(c.company.trim()) : null;
     const ticker = c.ticker ?? asTicker ?? postTickers(c.quote)[0] ?? null;
     return { ...c, ticker, company: asTicker && asTicker === ticker ? null : c.company };
@@ -598,6 +931,54 @@ async function assignTickers(extracted, text, directory) {
   }
   return claims;
 }
+var INDEX_ETFS = [
+  [/^(?:the )?(?:s&p(?: 500)?|s&p500|spx)(?: index)?$/i, "SPY"],
+  [/^(?:the )?nasdaq(?:[- ]100| composite)?(?: index)?$/i, "QQQ"],
+  [/^(?:the )?dow(?: jones)?(?: industrial average)?$/i, "DIA"],
+  [/^(?:the )?russell 2000$/i, "IWM"]
+];
+function indexEtf(company) {
+  const name = company?.trim();
+  return name && INDEX_ETFS.find(([re]) => re.test(name))?.[1] || null;
+}
+var ROLLING_MONTH = /\b(?:past|last|over (?:the|a|one)|in (?:a|one)|one|same|prior)\s+month\b|\b(?:30|thirty) days\b/i;
+var MONTH_TO_DATE = /\b(?:this month|so far (?:this|in) \w+|month[- ]to[- ]date|mtd)\b/i;
+function rollingMonth(c, text) {
+  if (c.window !== "month") return c;
+  const rolling = ROLLING_MONTH.test(c.quote) || !MONTH_TO_DATE.test(c.quote) && ROLLING_MONTH.test(text);
+  return rolling ? { ...c, window: null, windowDays: 30 } : c;
+}
+function undatedGuess(claim) {
+  if (claim.postedAt) return false;
+  if (claim.type === "earnings_date") return !claim.eventDate || !/\d/.test(claim.eventDate);
+  return shortMove(claim);
+}
+function shortMove(claim) {
+  if (claim.type !== "price_move" && claim.type !== "market_cap") return false;
+  return claim.window === "day" || claim.window === "week" || claim.window === "month" || claim.windowDays !== null && claim.windowDays <= 31 || claim.session !== null;
+}
+var APPROX_NOTE = ` The post's date comes from Reddit's rounded age ("13d ago"), which can be a day late, so the post may be about the session before. Add the exact date to check it.`;
+var INVESTMENT_VALUE = /\b(?:invest(?:ed|ment|ing)?|would be worth|would have|turned into|grown to)\b/i;
+function priceClaimMismatch(claim, text, today) {
+  if (claim.type !== "price_move" && claim.type !== "market_cap") return null;
+  if (claim.type === "price_move" && claim.claimedAmount !== null && claim.claimedPercent === null && INVESTMENT_VALUE.test(text)) {
+    return "The figure looks like what an investment would be worth, not the share price, so there is no price to compare it with.";
+  }
+  const year = claim.quote.match(/\b(19\d{2}|20\d{2})\b/)?.[1];
+  if (year && Number(year) < Number(today.slice(0, 4)) && !/\bsince\b/i.test(claim.quote)) {
+    return `This is about the move in ${year}. Verifi checks moves over recent spans, not past calendar years yet.`;
+  }
+  return null;
+}
+var WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+var SESSION_WEEKDAY = /\b(monday|tuesday|wednesday|thursday|friday)(?:'s|’s)?\s+(?:close|closes|closing|session|trading)\b|\b(?:on|rose|fell|dropped|jumped|closed)\s+(?:on\s+)?(monday|tuesday|wednesday|thursday|friday)\b/gi;
+function namedSession(text, postedAt) {
+  const days = new Set([...text.matchAll(SESSION_WEEKDAY)].map((m) => (m[1] ?? m[2]).toLowerCase()));
+  if (days.size !== 1) return null;
+  const target = WEEKDAY_NAMES.indexOf([...days][0]);
+  return addDays(postedAt, -((weekdayOf(postedAt) - target + 7) % 7));
+}
+var UNDATED_NOTE = " The post has no date, so this compares with today. If it was written on another day, add the post's date to check it against that day.";
 function namesInQuote(name, quote) {
   const word = name.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(" ").find((w) => w.length >= 3 && !["the", "inc", "corp"].includes(w));
   return Boolean(word && new RegExp(`\\b${word}`, "i").test(quote));
@@ -626,16 +1007,19 @@ async function checkPost(postText, deps, options = {}) {
   }
   const now = deps.now?.() ?? /* @__PURE__ */ new Date();
   const postedAt = resolvePostedAt(postText, options, now);
-  const extracted = dedupeClaims(await assignTickers(await deps.extractor.extractClaims(text), text, deps.directory));
+  const approxDate = !options.postedAt && !postTimestamp(postText) && Boolean(redditAge(postText.replace(/\r\n?/g, "\n"), now)?.approximate);
+  const extracted = dedupeClaims((await assignTickers(await deps.extractor.extractClaims(text), text, deps.directory)).map((c) => rollingMonth(c, text)));
   const tickers = [...new Set(extracted.map((c) => c.ticker).filter((t) => Boolean(t)))];
   const companies = [...new Set(extracted.map((c) => c.company).filter((t) => Boolean(t)))];
   const postTicker = tickers[0] ?? null;
   const postCompany = companies[0] ?? null;
   const postPeriod = sharedPostPeriod(extracted, text);
+  const sessionDay = postedAt ? namedSession(text, postedAt) : null;
   const borrowed = /* @__PURE__ */ new Set();
   const claims = extracted.map((c, i) => {
     const id = `c${i + 1}`;
-    const claim = { ...c, id, postedAt };
+    const dayMove = (c.type === "price_move" || c.type === "market_cap") && c.window === "day" && !c.session;
+    const claim = { ...c, id, postedAt: dayMove && sessionDay ? sessionDay : postedAt };
     if (postPeriod && borrowsPeriod(c, postPeriod)) {
       borrowed.add(id);
       claim.fiscalYear = postPeriod.fiscalYear;
@@ -668,6 +1052,8 @@ async function checkPost(postText, deps, options = {}) {
       return cant("Verifi checks the consensus for revenue and earnings per share only.");
     }
     if (claim.type === "implied_move") return cant("An implied move comes from options prices, and Verifi doesn't have options data yet.");
+    const mismatch = priceClaimMismatch(claim, text, postedAt ?? newYorkDate(now));
+    if (mismatch) return cant(mismatch);
     if (!claim.ticker) {
       return cant(
         claim.company ? `No stock ticker found for ${claim.company}. If it isn't publicly listed, there are no SEC filings to check this against.` : "The post doesn't say which company this is about."
@@ -684,9 +1070,26 @@ async function checkPost(postText, deps, options = {}) {
     try {
       const evidence = await fetchEvidence(source, claim);
       if (!evidence) return cant(source.emptyReason?.(claim) ?? `No filing data found for ${claim.ticker}.`);
-      const { verdict, reason, citation } = source.evaluate(claim, evidence);
-      const fullReason = borrowed.has(claim.id) && postPeriod && verdict !== "cant_check" ? `${reason} The post names ${periodLabel(postPeriod)} earlier, so this figure is checked against that period.` : reason;
-      return { claim, verdict, reason: fullReason, evidence: citation ? { ...evidence, citation } : evidence };
+      const result = source.evaluate(claim, evidence);
+      const { citation } = result;
+      let { verdict, reason } = result;
+      const withEvidence = citation ? { ...evidence, citation } : evidence;
+      if (verdict === "contradicted" && undatedGuess(claim)) {
+        return { claim, verdict: "cant_check", reason: `${reason.replace(STALE_NOTE, "")}${UNDATED_NOTE}`, evidence: withEvidence };
+      }
+      if (verdict === "contradicted" && approxDate && claim.postedAt === postedAt && shortMove(claim)) {
+        return { claim, verdict: "cant_check", reason: `${reason}${APPROX_NOTE}`, evidence: withEvidence };
+      }
+      if (borrowed.has(claim.id) && postPeriod && verdict !== "cant_check") {
+        const oldYear = postPeriod.fiscalYear !== null && postPeriod.fiscalYear < Number((postedAt ?? newYorkDate(now)).slice(0, 4)) - 1;
+        if (verdict === "contradicted" && oldYear) {
+          verdict = "cant_check";
+          reason = `${reason} This figure doesn't name its own period, so it was checked against ${periodLabel(postPeriod)}, named earlier in the post. It may be about another period.`;
+        } else {
+          reason = `${reason} The post names ${periodLabel(postPeriod)} earlier, so this figure is checked against that period.`;
+        }
+      }
+      return { claim, verdict, reason, evidence: withEvidence };
     } catch {
       return cant("Couldn't reach the data source. Try again in a minute.");
     }
@@ -1079,7 +1482,7 @@ function sessionOf(sentence) {
   if (/\b(after[- ]hours|afterhours|extended[- ]hours|overnight)\b/i.test(sentence)) return "after_hours";
   return null;
 }
-function referenceOf(sentence) {
+function referenceOf2(sentence) {
   if (/\bfrom (?:its |the )?(?:all[- ]time high|ath|record high)s?\b/i.test(sentence)) return "high_all_time";
   if (/\bfrom (?:its |the )?52[- ]week highs?\b/i.test(sentence)) return "high_52_week";
   if (/\b(?:from|off) (?:its |the )?(?:highs?|peak|top)\b/i.test(sentence)) return "high";
@@ -1185,7 +1588,7 @@ function createRuleBasedExtractor() {
         const opB = sentence.match(AMOUNT_THEN_OPERATING);
         if (opA) figure(opA[0], "operating_income", dollars(opA[2], opA[3]) * (opA[1].toLowerCase() === "loss" ? -1 : 1));
         else if (opB) figure(opB[0], "operating_income", dollars(opB[1], opB[2]) * (opB[3].toLowerCase() === "loss" ? -1 : 1));
-        const priceTiming = { window: windowOf(sentence), windowDays: windowDaysOf(sentence), session: sessionOf(sentence), reference: referenceOf(sentence) };
+        const priceTiming = { window: windowOf(sentence), windowDays: windowDaysOf(sentence), session: sessionOf(sentence), reference: referenceOf2(sentence) };
         const capChange = sentence.match(CAP_CHANGE);
         if (!revenue && !flipped && !multiple && !segmentMove && !capChange) {
           const move = sentence.match(PRICE_MOVE);
@@ -1297,56 +1700,6 @@ function createRuleBasedExtractor() {
       return normalizeClaims(claims);
     }
   };
-}
-
-// ../../packages/check-core/src/format.ts
-var MONTHS2 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-function formatDate(iso3) {
-  const [y, m, d] = iso3.split("-").map(Number);
-  if (!y || !m || !d) return iso3;
-  return `${MONTHS2[m - 1]} ${d}, ${y}`;
-}
-function formatUsd(value) {
-  const abs = Math.abs(value);
-  const sign = value < 0 ? "-" : "";
-  if (abs >= 1e12) return `${sign}$${trim(abs / 1e12)}T`;
-  if (abs >= 1e9) return `${sign}$${trim(abs / 1e9)}B`;
-  if (abs >= 1e6) return `${sign}$${trim(abs / 1e6)}M`;
-  if (abs >= 1e3) return `${sign}$${trim(abs / 1e3)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
-function trim(n) {
-  if (n < 10) return n.toFixed(2).replace(/\.?0+$/, "");
-  return n.toFixed(1).replace(/\.0$/, "");
-}
-function formatPercentMagnitude(percent) {
-  const abs = Math.abs(percent);
-  return abs >= 100 ? `${abs.toFixed(0)}%` : `${abs.toFixed(1)}%`;
-}
-function formatSignedPercent(percent) {
-  return `${percent >= 0 ? "+" : "-"}${formatPercentMagnitude(percent)}`;
-}
-function formatPerShare(value) {
-  return `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(2)}`;
-}
-function formatPrice(value) {
-  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-function formatTime(iso3) {
-  const date = new Date(iso3);
-  if (Number.isNaN(date.getTime())) return iso3;
-  const text = date.toLocaleString("en-US", {
-    timeZone: "America/New_York",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  });
-  return `${text} ET`;
-}
-function describeChange(percent) {
-  return `${percent >= 0 ? "up" : "down"} ${formatPercentMagnitude(percent)}`;
 }
 
 // ../../packages/check-core/src/sources/sec/series.ts
@@ -1466,12 +1819,32 @@ function calendarOf(p) {
   const middle = new Date((toTime(p.start) + toTime(p.end)) / 2);
   return { year: middle.getUTCFullYear(), quarter: Math.floor(middle.getUTCMonth() / 3) + 1 };
 }
-function isQuarter(q2, year, quarter) {
-  const calendar = calendarOf(q2);
-  return q2.fiscalYear === year && q2.fiscalQuarter === quarter || calendar.year === year && calendar.quarter === quarter;
+function fiscalLabel(quarters, i) {
+  const q2 = quarters[i];
+  if (q2.fiscalQuarter && q2.fiscalYear) return { year: q2.fiscalYear, quarter: q2.fiscalQuarter };
+  const prev = quarters[i + 1];
+  if (!prev?.fiscalQuarter || !prev.fiscalYear) return null;
+  const gapDays = (toTime(q2.end) - toTime(prev.end)) / 864e5;
+  if (gapDays < 80 || gapDays > 100) return null;
+  return prev.fiscalQuarter === 4 ? { year: prev.fiscalYear + 1, quarter: 1 } : { year: prev.fiscalYear, quarter: prev.fiscalQuarter + 1 };
 }
-function latestNamedQuarter(quarters, quarter) {
-  return quarters.find((q2) => q2.fiscalQuarter === quarter || calendarOf(q2).quarter === quarter);
+function upcomingNamedQuarter(quarters, quarter) {
+  const newest = quarters.length ? fiscalLabel(quarters, 0) : null;
+  if (!newest) return null;
+  const next = newest.quarter === 4 ? { year: newest.year + 1, quarter: 1 } : { year: newest.year, quarter: newest.quarter + 1 };
+  return next.quarter === quarter ? `Q${next.quarter} ${next.year}` : null;
+}
+function namedQuarters(quarters, quarter, year, quote = "") {
+  const fiscal = quarters.find((q2, i) => {
+    const label = fiscalLabel(quarters, i);
+    return label?.quarter === quarter && (year === null || label.year === year);
+  });
+  if (/\bfiscal\b|\bFY\s?'?\d/i.test(quote)) return fiscal ? [fiscal] : [];
+  const calendar = quarters.find((q2) => {
+    const c = calendarOf(q2);
+    return c.quarter === quarter && (year === null || c.year === year);
+  });
+  return [...new Set([fiscal, calendar].filter((q2) => Boolean(q2)))].sort((a, b) => b.end.localeCompare(a.end));
 }
 function isYear(y, year) {
   return y.fiscalYear === year || Number(y.end.slice(0, 4)) === year;
@@ -1761,7 +2134,7 @@ function citationFor(evidence, p) {
     url: p.filing.url ?? filingUrl(evidence.cik, p.filing.accession)
   };
 }
-function figuresFor(quarters, years) {
+function figuresFor2(quarters, years) {
   return [
     ...quarters.slice(0, 4).map((q2) => ({
       label: `Quarter ended ${formatDate(q2.end)}${q2.derived ? " (calculated)" : q2.filing.form === "8-K" ? " (earnings release)" : ""}`,
@@ -1779,7 +2152,7 @@ function resolvePeriods(claim, evidence) {
   const granularity = claim.fiscalQuarter ? "quarter" : claim.period ?? (claim.fiscalYear ? "year" : null);
   if (granularity === "quarter") {
     if (claim.fiscalQuarter && claim.fiscalYear) {
-      const targets = evidence.quarters.filter((q2) => isQuarter(q2, claim.fiscalYear, claim.fiscalQuarter));
+      const targets = namedQuarters(evidence.quarters, claim.fiscalQuarter, claim.fiscalYear, claim.quote);
       const named = `Q${claim.fiscalQuarter} ${claim.fiscalYear}`;
       if (targets.length === 0) {
         return quarterAfter(evidence.quarters[0], claim.fiscalYear, claim.fiscalQuarter) ? { targets, alternates: [], notFiled: named } : { targets, alternates: [], missing: named };
@@ -1787,8 +2160,8 @@ function resolvePeriods(claim, evidence) {
       return { targets, alternates: some(latestYear) };
     }
     if (claim.fiscalQuarter) {
-      const named = latestNamedQuarter(quarters, claim.fiscalQuarter);
-      if (named) return { targets: some(named), alternates: some(latestYear) };
+      const named = namedQuarters(quarters, claim.fiscalQuarter, null, claim.quote);
+      if (named.length) return { targets: named, alternates: some(latestYear) };
     }
     return { targets: some(latestQuarter), alternates: some(latestYear) };
   }
@@ -1808,6 +2181,9 @@ function resolvePeriods(claim, evidence) {
 function evaluateFigureClaim(claim, evidence) {
   const claimed = claim.claimedAmount;
   if (claimed === null) return { verdict: "cant_check", reason: "The post doesn't give a dollar amount to compare." };
+  if (/\b(?:non[- ]?gaap|adjusted|adj\.?|ex[- ]items|excluding)\b/i.test(claim.quote)) {
+    return { verdict: "cant_check", reason: "This is an adjusted (non-GAAP) figure. SEC filings report the standard GAAP figure, which leaves nothing like-for-like to compare." };
+  }
   const { targets, alternates, missing, notFiled } = resolvePeriods(claim, evidence);
   if (notFiled) return { verdict: "cant_check", reason: notFiledYet(notFiled, evidence.quarters[0] ?? evidence.years[0], evidence.ticker) };
   if (targets.length === 0) {
@@ -1850,6 +2226,20 @@ function evaluateFigureClaim(claim, evidence) {
     const how = Math.abs(claimed) > Math.abs(nearest.value) ? "overstated" : "understated";
     return { verdict: "misleading", reason: `Close, but ${how}. ${actual}`, citation };
   }
+  const upcoming = claim.fiscalQuarter && !claim.fiscalYear ? upcomingNamedQuarter(onFileBy(evidence.quarters, claim.postedAt), claim.fiscalQuarter) : null;
+  if (upcoming) {
+    return { verdict: "cant_check", reason: `${notFiledYet(upcoming, evidence.quarters[0], evidence.ticker)} The post is likely about ${upcoming}, not the Q${claim.fiscalQuarter} a year earlier.` };
+  }
+  if (!claim.postedAt && !claim.fiscalQuarter && !claim.fiscalYear) {
+    const older = [...evidence.quarters.slice(1, 13), ...evidence.years.slice(1, 4)].find((p) => within(claimed, p.value, TIGHT));
+    if (older) {
+      return {
+        verdict: "cant_check",
+        reason: `The company reported ${reported(older)}, which matches. The post has no date, so it may be about that period. Add the post's date to check it against the latest figures at the time.`,
+        citation: citationFor(evidence, older)
+      };
+    }
+  }
   return { verdict: "contradicted", reason: `${actual} The post says ${claimedText}.`, citation };
 }
 function createSecFigureSource({ sec, releases }) {
@@ -1884,7 +2274,7 @@ function createSecFigureSource({ sec, releases }) {
         cik: company.cik,
         quarters,
         years,
-        figures: figuresFor(quarters, years),
+        figures: figuresFor2(quarters, years),
         citation: { label: "", url: "" }
       };
       evidence.citation = citationFor(evidence, newest);
@@ -1918,7 +2308,7 @@ function periodWords2(basis2) {
       return `the fiscal year ended ${end}, compared with the year before`;
   }
 }
-function figuresFor2(bases) {
+function figuresFor3(bases) {
   const rows = [];
   for (const b of bases) {
     const unit = b.id === "year_yoy" ? "Fiscal year" : "Quarter";
@@ -1941,21 +2331,22 @@ function referencePeriods(claim, evidence) {
     const newest = all.quarters[0] ?? all.years[0];
     return `SEC data for ${evidence.ticker} doesn't include ${named}.${newest ? ` The most recent period on file is ${periodWords(newest)}.` : ""}`;
   };
+  const withYear = (qs) => qs.map((q2) => ({ q: q2, y: years.find((p) => p.end <= q2.end) }));
   if (claim.fiscalQuarter && claim.fiscalYear) {
-    const q2 = all.quarters.find((p) => isQuarter(p, claim.fiscalYear, claim.fiscalQuarter));
-    if (!q2) return { named: true, stop: missing(`Q${claim.fiscalQuarter} ${claim.fiscalYear}`, quarterAfter(all.quarters[0], claim.fiscalYear, claim.fiscalQuarter)) };
-    return { q: q2, y: years.find((p) => p.end <= q2.end), named: true };
+    const qs = namedQuarters(all.quarters, claim.fiscalQuarter, claim.fiscalYear, claim.quote);
+    if (!qs.length) return { options: [], named: true, stop: missing(`Q${claim.fiscalQuarter} ${claim.fiscalYear}`, quarterAfter(all.quarters[0], claim.fiscalYear, claim.fiscalQuarter)) };
+    return { options: withYear(qs), named: true };
   }
   if (claim.fiscalQuarter) {
-    const q2 = latestNamedQuarter(quarters, claim.fiscalQuarter);
-    if (q2) return { q: q2, y: years.find((p) => p.end <= q2.end), named: true };
+    const qs = namedQuarters(quarters, claim.fiscalQuarter, null, claim.quote);
+    if (qs.length) return { options: withYear(qs), named: true };
   }
   if (claim.fiscalYear && claim.period !== "quarter") {
     const y = all.years.find((p) => isYear(p, claim.fiscalYear));
-    if (!y) return { named: true, stop: missing(`fiscal year ${claim.fiscalYear}`, yearAfter(all.years[0], claim.fiscalYear)) };
-    return { y, named: true };
+    if (!y) return { options: [], named: true, stop: missing(`fiscal year ${claim.fiscalYear}`, yearAfter(all.years[0], claim.fiscalYear)) };
+    return { options: [{ y }], named: true };
   }
-  return { q: quarters[0], y: years[0], named: Boolean(claim.postedAt) };
+  return { options: [{ q: quarters[0], y: years[0] }], named: Boolean(claim.postedAt) };
 }
 function namedBases(claim) {
   const quarterly = claim.period === "quarter" || claim.fiscalQuarter !== null;
@@ -1968,12 +2359,36 @@ function evaluateRevenueClaim(claim, evidence) {
   if (claim.claimedPercent === null && claim.direction === null) {
     return { verdict: "cant_check", reason: "The post doesn't say how revenue changed, so there is nothing to compare." };
   }
-  let bases = evidence.bases;
-  if (evidence.quarters?.length || evidence.years?.length) {
-    const ref = referencePeriods(claim, evidence);
-    if (ref.stop) return { verdict: "cant_check", reason: ref.stop };
-    bases = growthBases(evidence.quarters, evidence.years, ref.q, ref.y, ref.named ? "named" : "latest");
+  if (!evidence.quarters?.length && !evidence.years?.length) return compareGrowth(claim, evidence.bases);
+  const ref = referencePeriods(claim, evidence);
+  if (ref.stop) return { verdict: "cant_check", reason: ref.stop };
+  const results = ref.options.map((o) => compareGrowth(claim, growthBases(evidence.quarters, evidence.years, o.q, o.y, ref.named ? "named" : "latest")));
+  const best = results.reduce((a, b) => RANK[b.verdict] > RANK[a.verdict] ? b : a);
+  if (best.verdict !== "contradicted") return best;
+  const upcoming = claim.fiscalQuarter && !claim.fiscalYear ? upcomingNamedQuarter(evidence.quarters ?? [], claim.fiscalQuarter) : null;
+  if (upcoming) {
+    return { verdict: "cant_check", reason: `${notFiledYet(upcoming, evidence.quarters?.[0], evidence.ticker)} The post is likely about ${upcoming}, not the Q${claim.fiscalQuarter} a year earlier.` };
   }
+  if (TRAILING.test(claim.quote) || !ref.named && FROM_TO.test(claim.quote)) {
+    return {
+      verdict: "cant_check",
+      reason: `The post measures growth over a span that isn't a filed quarter or fiscal year (trailing twelve months, or between two figures it doesn't date), so it can't be matched to the filings. ${best.reason.replace(/ The post says [^.]*\.$/, "")}`
+    };
+  }
+  if (ref.named || claim.claimedPercent === null) return best;
+  for (const q2 of (evidence.quarters ?? []).slice(1, 13)) {
+    const y = (evidence.years ?? []).find((p) => p.end <= q2.end);
+    const older = compareGrowth(claim, growthBases(evidence.quarters, evidence.years, q2, y, "named"));
+    if (older.verdict === "holds_up") {
+      return { verdict: "cant_check", reason: `${older.reason} The post has no date, so it may be about that quarter. Add the post's date to check it against the latest figures at the time.` };
+    }
+  }
+  return best;
+}
+var RANK = { holds_up: 3, misleading: 2, contradicted: 1, cant_check: 0 };
+var TRAILING = /\btrailing\b|\bttm\b|\b(?:last|past|in|over)\s+(?:the\s+)?(?:12|twelve)\s+months\b/i;
+var FROM_TO = /\bfrom\s+\$?\d[\d.,]*\s*(?:[kmbt]|million|billion|trillion)?\w*\s+to\s+\$?\d/i;
+function compareGrowth(claim, bases) {
   const wanted = namedBases(claim);
   const targets = wanted.map((id) => bases.find((b) => b.id === id)).filter((b) => Boolean(b));
   const primary = targets[0];
@@ -2046,7 +2461,7 @@ function createSecRevenueSource({ sec, releases }) {
         bases: summary.bases,
         quarters: summary.quarters,
         years: summary.years,
-        figures: figuresFor2(summary.bases),
+        figures: figuresFor3(summary.bases),
         citation: {
           label: filingLabel(summary.latest.form, summary.latest.filed),
           url: summary.latest.url ?? filingUrl(company.cik, summary.latest.accession)
@@ -2203,268 +2618,6 @@ function createAlpacaHistory({ alpaca, now = () => /* @__PURE__ */ new Date() })
   };
 }
 
-// ../../packages/check-core/src/sources/finnhub/marketSource.ts
-var PRICE_TOLERANCE = 0.1;
-var PRICE_MIN_POINTS = 0.5;
-var PRICE_LOOSE = 0.25;
-var CAP_TIGHT = 0.1;
-var CAP_LOOSE = 0.25;
-var WINDOWS = ["day", "week", "month", "ytd", "year"];
-var WINDOW_WORDS = {
-  day: "today",
-  week: "over the past 5 trading days",
-  month: "so far this month",
-  ytd: "so far this year",
-  year: "over the past 52 weeks"
-};
-var METRIC_FIELD = {
-  week: "5DayPriceReturnDaily",
-  month: "monthToDatePriceReturnDaily",
-  ytd: "yearToDatePriceReturnDaily",
-  year: "52WeekPriceReturnDaily"
-};
-var MAX_LAG_DAYS = { day: 0, week: 0, price: 0, high: 1, month: 1, ytd: 3, year: 3 };
-var STALE_NOTE = " Prices move all day, so the post may have been right when it was written.";
-var agrees = (claimed, actual, margin = PRICE_TOLERANCE) => Math.abs(claimed - actual) <= Math.max(Math.abs(claimed) * margin, PRICE_MIN_POINTS);
-function moveText(evidence, w) {
-  return `${describeChange(evidence.returns[w])} ${WINDOW_WORDS[w]}`;
-}
-function windowForDays(days) {
-  if (days === 1) return "day";
-  if (days === 5 || days === 7) return "week";
-  if (days >= 360 && days <= 366) return "year";
-  return null;
-}
-function staleReason(claim, evidence, kind, what) {
-  if (!claim.postedAt) return null;
-  const readDay = newYorkDate(new Date(evidence.readAt));
-  const lag = daysBetween(claim.postedAt, readDay);
-  if (lag <= MAX_LAG_DAYS[kind]) return null;
-  return `The post is from ${formatDate(claim.postedAt)}, but the market data shows ${evidence.ticker} as of ${formatDate(readDay)}, so ${what} on the post's date can't be checked.`;
-}
-function claimedWords(claim, claimed) {
-  const b = claim.bound === "at_least" ? "more than " : claim.bound === "at_most" ? "less than " : "";
-  return `${b}${formatPercentMagnitude(claimed)} ${claim.direction === "down" ? "drop" : "gain"}`;
-}
-function evaluateFromHigh(claim, evidence) {
-  if (claim.reference === "high_all_time") {
-    return { verdict: "cant_check", reason: "The market data only goes back 52 weeks, so a move from the all-time high can't be checked." };
-  }
-  const high = evidence.high52Week;
-  if (!high || evidence.price === null || claim.claimedPercent === null) {
-    return { verdict: "cant_check", reason: `No 52-week high found for ${evidence.ticker}.` };
-  }
-  const stale = staleReason(claim, evidence, "high", "the distance from the high");
-  if (stale) return { verdict: "cant_check", reason: stale };
-  const below = (high.price - evidence.price) / high.price * 100;
-  const when = high.date ? `, reached ${formatDate(high.date)}` : "";
-  const actualText = `${evidence.entityName} stock is ${formatPrice(evidence.price)}, ${formatPercentMagnitude(below)} below its 52-week high of ${formatPrice(high.price)}${when} (as of ${formatTime(evidence.readAt)}).`;
-  const claimed = claim.claimedPercent;
-  if (agrees(claimed, below)) return { verdict: "holds_up", reason: actualText };
-  if (claim.reference === "high" && claimed > below) {
-    return {
-      verdict: "cant_check",
-      reason: `${actualText} The post may mean an older high than the past 52 weeks, which the market data doesn't cover.`
-    };
-  }
-  if (agrees(claimed, below, PRICE_LOOSE)) {
-    return { verdict: "misleading", reason: `Close, but ${claimed > below ? "overstated" : "understated"}. ${actualText}${STALE_NOTE}` };
-  }
-  return { verdict: "contradicted", reason: `${actualText} The post says ${formatPercentMagnitude(claimed)} below the high.${STALE_NOTE}` };
-}
-function evaluatePrice(claim, evidence) {
-  const claimed = claim.claimedAmount;
-  if (evidence.price === null) return { verdict: "cant_check", reason: `No current price found for ${evidence.ticker}.` };
-  const stale = staleReason(claim, evidence, "price", "the share price");
-  if (stale) return { verdict: "cant_check", reason: stale };
-  const actualText = `${evidence.entityName} stock is ${formatPrice(evidence.price)} (as of ${formatTime(evidence.readAt)}).`;
-  const gap = Math.abs(claimed - evidence.price) / claimed;
-  if (gap <= PRICE_TOLERANCE) return { verdict: "holds_up", reason: actualText };
-  if (gap <= PRICE_LOOSE) return { verdict: "misleading", reason: `Close, but ${claimed > evidence.price ? "overstated" : "understated"}. ${actualText}${STALE_NOTE}` };
-  return { verdict: "contradicted", reason: `${actualText} The post says ${formatPrice(claimed)}.${STALE_NOTE}` };
-}
-function claimWindow(claim, evidence, available) {
-  const all = available.map((w) => moveText(evidence, w)).join(", ");
-  const context = all ? ` For reference, ${evidence.entityName} stock is ${all} (as of ${formatTime(evidence.readAt)}).` : "";
-  if (claim.window) return { window: claim.window };
-  if (claim.windowDays !== null) {
-    if (claim.windowDays > 366) return { reason: `The market data only goes back 52 weeks, so a move over a longer span can't be checked.` };
-    const w = windowForDays(claim.windowDays);
-    if (w) return { window: w };
-    return { reason: `The market data has changes for today, 5 trading days, this month, this year and 52 weeks, not ${claim.windowDays} days.${context}` };
-  }
-  return { reason: `The post doesn't say over what period, so there is no change to compare.${context}` };
-}
-function evaluatePriceMove(claim, evidence) {
-  if (claim.session) {
-    const when = claim.session === "pre_market" ? "Pre-market" : "After-hours";
-    return { verdict: "cant_check", reason: `${when} prices aren't in the market data, which covers regular trading hours only.` };
-  }
-  if (claim.reference) return evaluateFromHigh(claim, evidence);
-  if (claim.claimedPercent === null && claim.direction === null) {
-    if (claim.claimedAmount !== null) return evaluatePrice(claim, evidence);
-    return { verdict: "cant_check", reason: "The post doesn't say how the price moved, so there is nothing to compare." };
-  }
-  const available = WINDOWS.filter((w) => typeof evidence.returns[w] === "number");
-  if (available.length === 0) return { verdict: "cant_check", reason: `No recent price changes found for ${evidence.ticker}.` };
-  const resolved = claimWindow(claim, evidence, available);
-  if ("reason" in resolved) return { verdict: "cant_check", reason: resolved.reason };
-  const named = resolved.window;
-  if (!available.includes(named)) {
-    const early = named === "month" ? " Early in a month the month-to-date figure isn't reliable yet." : "";
-    return { verdict: "cant_check", reason: `The market data doesn't include ${evidence.ticker}'s change ${WINDOW_WORDS[named]}.${early}` };
-  }
-  const stale = staleReason(claim, evidence, named, `a move ${WINDOW_WORDS[named]}`);
-  if (stale) return { verdict: "cant_check", reason: stale };
-  const at = `as of ${formatTime(evidence.readAt)}`;
-  const sign = claim.direction === "down" ? -1 : 1;
-  const actualText = (w) => `${evidence.entityName} stock is ${moveText(evidence, w)} (${at}).`;
-  const actual = evidence.returns[named];
-  if (claim.claimedPercent === null) {
-    const same = Math.sign(actual) === sign || actual === 0;
-    return { verdict: same ? "holds_up" : "contradicted", reason: `${actualText(named)}${same ? "" : STALE_NOTE}` };
-  }
-  const claimed = sign * claim.claimedPercent;
-  const claimedText = claimedWords(claim, claim.claimedPercent);
-  const margin = (c) => Math.max(Math.abs(c) * PRICE_TOLERANCE, PRICE_MIN_POINTS);
-  const tight = (w) => {
-    const r = evidence.returns[w];
-    if (claim.bound === "at_least") return sign * r >= claim.claimedPercent - margin(claimed);
-    if (claim.bound === "at_most") return sign * r <= claim.claimedPercent + margin(claimed) && Math.sign(r) !== -sign;
-    return agrees(claimed, r);
-  };
-  if (tight(named)) return { verdict: "holds_up", reason: actualText(named) };
-  const other = available.find((w) => w !== named && tight(w));
-  if (other) {
-    return {
-      verdict: "misleading",
-      reason: `A ${claimedText} matches the change ${WINDOW_WORDS[other]}, not ${WINDOW_WORDS[named]}. ${actualText(named)}`
-    };
-  }
-  if (Math.sign(actual) === sign && agrees(claimed, actual, PRICE_LOOSE)) {
-    const how = Math.abs(claimed) > Math.abs(actual) ? "overstated" : "understated";
-    return { verdict: "misleading", reason: `Close, but ${how}. ${actualText(named)}${STALE_NOTE}` };
-  }
-  return { verdict: "contradicted", reason: `${actualText(named)} The post says a ${claimedText} ${WINDOW_WORDS[named]}.${STALE_NOTE}` };
-}
-function evaluateCapChange(claim, evidence) {
-  const claimed = claim.claimedAmount;
-  if (evidence.marketCap === null) return { verdict: "cant_check", reason: `No market value found for ${evidence.ticker}.` };
-  const available = WINDOWS.filter((w) => typeof evidence.returns[w] === "number");
-  const resolved = claimWindow(claim, evidence, available);
-  if ("reason" in resolved) return { verdict: "cant_check", reason: resolved.reason.replace("no change to compare", "no change in value to compare") };
-  const named = resolved.window;
-  const r = evidence.returns[named];
-  if (typeof r !== "number") return { verdict: "cant_check", reason: `The market data doesn't include ${evidence.ticker}'s change ${WINDOW_WORDS[named]}.` };
-  const stale = staleReason(claim, evidence, named, `the change in value ${WINDOW_WORDS[named]}`);
-  if (stale) return { verdict: "cant_check", reason: stale };
-  const before = evidence.marketCap / (1 + r / 100);
-  const change = evidence.marketCap - before;
-  const verb = change < 0 ? "lost" : "gained";
-  const actualText = `${evidence.entityName} ${verb} about ${formatUsd(Math.abs(change))} in market value ${WINDOW_WORDS[named]} (${describeChange(r)} on a value of about ${formatUsd(evidence.marketCap)}, as of ${formatTime(evidence.readAt)}).`;
-  const claimedText = `${formatUsd(claimed)} ${claim.direction === "down" ? "wiped out" : "added"}`;
-  if (claim.direction === "down" !== change < 0) return { verdict: "contradicted", reason: `${actualText} The post says ${claimedText}.${STALE_NOTE}` };
-  const gap = Math.abs(claimed - Math.abs(change)) / claimed;
-  if (gap <= CAP_TIGHT) return { verdict: "holds_up", reason: actualText };
-  if (gap <= CAP_LOOSE) return { verdict: "misleading", reason: `Close, but ${claimed > Math.abs(change) ? "overstated" : "understated"}. ${actualText}${STALE_NOTE}` };
-  return { verdict: "contradicted", reason: `${actualText} The post says ${claimedText}.${STALE_NOTE}` };
-}
-function evaluateMarketCap(claim, evidence) {
-  const claimed = claim.claimedAmount;
-  if (claimed === null) return { verdict: "cant_check", reason: "The post doesn't give a market value to compare." };
-  if (claim.direction) return evaluateCapChange(claim, evidence);
-  if (evidence.marketCap === null) return { verdict: "cant_check", reason: `No market value found for ${evidence.ticker}.` };
-  const stale = staleReason(claim, evidence, "month", "the market value");
-  if (stale) return { verdict: "cant_check", reason: stale };
-  const actual = evidence.marketCap;
-  const actualText = `${evidence.entityName} is worth about ${formatUsd(actual)} (market value, ${"as of " + formatTime(evidence.readAt)}).`;
-  const b = claim.bound === "at_least" ? "more than " : claim.bound === "at_most" ? "less than " : "";
-  if (claim.bound) {
-    const ok = claim.bound === "at_least" ? actual >= claimed * (1 - CAP_TIGHT) : actual <= claimed * (1 + CAP_TIGHT);
-    return ok ? { verdict: "holds_up", reason: actualText } : { verdict: "contradicted", reason: `${actualText} The post says ${b}${formatUsd(claimed)}.` };
-  }
-  const gap = Math.abs(claimed - actual) / claimed;
-  if (gap <= CAP_TIGHT) return { verdict: "holds_up", reason: actualText };
-  if (gap <= CAP_LOOSE) {
-    return { verdict: "misleading", reason: `Close, but ${claimed > actual ? "overstated" : "understated"}. ${actualText}` };
-  }
-  return { verdict: "contradicted", reason: `${actualText} The post says ${formatUsd(claimed)}.` };
-}
-function evaluateMarketClaim(claim, evidence) {
-  return claim.type === "market_cap" ? evaluateMarketCap(claim, evidence) : evaluatePriceMove(claim, evidence);
-}
-function figuresFor3(e) {
-  const rows = [];
-  if (e.price !== null) rows.push({ label: "Share price", value: formatPrice(e.price) });
-  for (const w of WINDOWS) {
-    const r = e.returns[w];
-    if (typeof r === "number") rows.push({ label: `Change ${WINDOW_WORDS[w]}`, value: formatSignedPercent(r) });
-  }
-  if (e.high52Week) rows.push({ label: "52-week high", value: formatPrice(e.high52Week.price) });
-  if (e.marketCap !== null) rows.push({ label: "Market value", value: formatUsd(e.marketCap) });
-  return rows;
-}
-function dayOfMonthInNewYork(iso3) {
-  return Number(new Date(iso3).toLocaleString("en-US", { timeZone: "America/New_York", day: "numeric" }));
-}
-var num = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
-function createFinnhubMarketSource({ finnhub, now = () => /* @__PURE__ */ new Date() }) {
-  return {
-    id: "finnhub-market",
-    ttlMs: 5 * 60 * 1e3,
-    // Every price and market-value claim comes here, so each gets a specific
-    // answer (a verdict, or why it can't be checked) instead of "not connected".
-    supports: (claim) => claim.type === "price_move" || claim.type === "market_cap",
-    cacheKey: (claim) => `finnhub-market:${claim.ticker ?? ""}`,
-    emptyReason: (claim) => `No market data found for ${claim.ticker}. It may not trade on a US exchange.`,
-    async fetchEvidence(claim) {
-      if (!claim.ticker) return null;
-      const [quote, profile, metrics] = await Promise.all([
-        finnhub.quote(claim.ticker),
-        finnhub.profile(claim.ticker),
-        finnhub.metrics(claim.ticker)
-      ]);
-      if (!quote?.c && !profile?.name) return null;
-      const m = metrics?.metric ?? {};
-      const returns = {};
-      const day = num(quote?.dp);
-      if (day !== null && quote?.c) returns.day = day;
-      const readAt = quote?.t ? new Date(quote.t * 1e3).toISOString() : now().toISOString();
-      for (const [w, field] of Object.entries(METRIC_FIELD)) {
-        const value = num(m[field]);
-        if (value !== null) returns[w] = value;
-      }
-      if (dayOfMonthInNewYork(readAt) <= 7) delete returns.month;
-      const capMillions = num(profile?.marketCapitalization) ?? num(m["marketCapitalization"]);
-      const highPrice = num(m["52WeekHigh"]);
-      const highDate = typeof m["52WeekHighDate"] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(m["52WeekHighDate"]) ? m["52WeekHighDate"] : null;
-      const evidence = {
-        kind: "market",
-        sourceId: "finnhub-market",
-        ticker: claim.ticker,
-        entityName: profile?.name || claim.ticker,
-        asOf: readAt.slice(0, 10),
-        readAt,
-        price: quote?.c ? quote.c : null,
-        returns,
-        marketCap: capMillions === null ? null : capMillions * 1e6,
-        high52Week: highPrice !== null && highPrice > 0 ? { price: highPrice, date: highDate } : null,
-        figures: [],
-        citation: {
-          label: `Finnhub market data, ${formatTime(readAt)}`,
-          url: `https://finance.yahoo.com/quote/${encodeURIComponent(claim.ticker)}/`
-        }
-      };
-      evidence.figures = figuresFor3(evidence);
-      return evidence;
-    },
-    evaluate(claim, evidence) {
-      if (evidence.kind !== "market") return { verdict: "cant_check", reason: "The data found does not match this claim." };
-      return evaluateMarketClaim(claim, evidence);
-    }
-  };
-}
-
 // ../../packages/check-core/src/sources/alpaca/historySource.ts
 var PRE_OPEN = 9 * 60 + 30;
 var CLOSE = 16 * 60;
@@ -2593,6 +2746,11 @@ function measureHistory(claim, bars, options) {
       } else {
         const top = bars.slice(0, end + 1).reduce((a, b) => b.high > a.high ? b : a);
         evidence.high = { price: top.high, date: top.date, scope: "history", complete };
+        const yearAgo = addDays(e.date, -365);
+        if (claim.reference === "high" && first.date <= yearAgo) {
+          const top52 = bars.slice(0, end + 1).filter((b) => b.date > yearAgo).reduce((a, b) => b.high > a.high ? b : a);
+          if (top52.high < top.high) evidence.high52 = { price: top52.high, date: top52.date, scope: "52_week", complete: true };
+        }
       }
     }
   } else if (claim.claimedPercent !== null || claim.direction !== null) {
@@ -2650,6 +2808,16 @@ function evaluatePriceHistoryClaim(claim, e) {
     const h = e.high;
     const claimed = claim.claimedPercent;
     if (claimed === null) return { verdict: "cant_check", reason: "The post doesn't say how far from the high, so there is nothing to compare." };
+    if (e.high52) {
+      const h52 = e.high52;
+      const below52 = (h52.price - e.session.close) / h52.price * 100;
+      if (agrees(claimed, below52)) {
+        return {
+          verdict: "holds_up",
+          reason: `${name} ${closed(e)} ${formatPrice(e.session.close)} on ${day}, ${formatPercentMagnitude(below52)} below its 52-week high of ${formatPrice(h52.price)} on ${formatDate(h52.date)}.${posted}${still(e)}`
+        };
+      }
+    }
     const below = (h.price - e.session.close) / h.price * 100;
     const nearest = (h.price - e.session.high) / h.price * 100;
     const farthest = (h.price - e.session.low) / h.price * 100;
@@ -2796,6 +2964,7 @@ var IN_LINE = 5e-3;
 var EPS_TIGHT_DOLLARS = 0.01;
 var EPS_TIGHT_RELATIVE = 0.03;
 var EPS_LOOSE_RELATIVE = 0.15;
+var GAAP_TALK = /\b(?:one[- ]time|(?:non[- ])?gaap|adjusted|clean|excluding|charges?|settlement|write[- ]?(?:downs?|offs?)|impairments?|non[- ]?recurring|special items?)\b|["“”'‘’](?:beat|miss(?:ed)?)["“”'‘’]/i;
 var SURPRISE_TIGHT_POINTS = 2;
 var SURPRISE_TIGHT_RELATIVE = 0.2;
 var BASIS_NOTE = " Estimates and reported EPS here are on the adjusted basis analysts use, which can differ from the GAAP figure in the filing.";
@@ -2822,12 +2991,15 @@ function targetOf(claim, quarters) {
   if (!claim.fiscalQuarter) return claim.postedAt ? reported.find((q2) => q2.period < claim.postedAt) : reported[0];
   const fiscal = reported.find((q2) => q2.fiscalQuarter === claim.fiscalQuarter && (!claim.fiscalYear || q2.fiscalYear === claim.fiscalYear));
   if (fiscal) return fiscal;
-  return reported.find((q2) => {
+  return calendarTarget(claim, quarters);
+}
+function calendarTarget(claim, quarters) {
+  return quarters.filter((q2) => q2.actual !== null).find((q2) => {
     const quarter = Math.ceil(Number(q2.period.slice(5, 7)) / 3);
     return quarter === claim.fiscalQuarter && (!claim.fiscalYear || Number(q2.period.slice(0, 4)) === claim.fiscalYear);
   });
 }
-var RANK = { contradicted: 3, misleading: 2, holds_up: 1, cant_check: 0 };
+var RANK2 = { contradicted: 3, misleading: 2, holds_up: 1, cant_check: 0 };
 function afterNewest(claim, quarters) {
   if (!claim.fiscalQuarter || !claim.fiscalYear) return false;
   const reported = quarters.filter((q2) => q2.actual !== null);
@@ -2839,6 +3011,14 @@ function afterNewest(claim, quarters) {
   return fiscal !== null ? named > calendar && named > fiscal : named > calendar;
 }
 function evaluateEarningsClaim(claim, evidence) {
+  const calendar = claim.fiscalQuarter && !/\bfiscal\b|\bFY\s?'?\d/i.test(claim.quote) ? calendarTarget(claim, evidence.quarters) : void 0;
+  const first = evaluateOne(claim, evidence);
+  if (!calendar || calendar === targetOf(claim, evidence.quarters) || !calendar.fiscalQuarter || !calendar.fiscalYear) return first;
+  const second = evaluateOne({ ...claim, fiscalQuarter: calendar.fiscalQuarter, fiscalYear: calendar.fiscalYear }, evidence);
+  const fit = { holds_up: 3, misleading: 2, contradicted: 1, cant_check: 0 };
+  return fit[second.verdict] > fit[first.verdict] ? second : first;
+}
+function evaluateOne(claim, evidence) {
   if (claim.vsEstimate === null && claim.claimedAmount === null && claim.claimedPercent !== null) {
     return { verdict: "cant_check", reason: "This is about EPS growth, not a beat or miss. Verifi checks EPS against analyst estimates, and doesn't check EPS growth yet." };
   }
@@ -2865,7 +3045,12 @@ function evaluateEarningsClaim(claim, evidence) {
     else if (claim.vsEstimate === outcome) parts.push({ verdict: "holds_up", lead: "" });
     else if (outcome === "in_line") parts.push({ verdict: "misleading", lead: `Earnings matched the estimate; they did not ${claim.vsEstimate === "beat" ? "beat" : "miss"} it.` });
     else if (claim.vsEstimate === "in_line") parts.push({ verdict: "misleading", lead: `Earnings ${outcome === "beat" ? "beat" : "missed"} the estimate rather than matching it.` });
-    else parts.push({ verdict: "contradicted", lead: `Earnings ${outcome === "beat" ? "beat" : "missed"} the estimate. The post says they ${claim.vsEstimate === "beat" ? "beat" : "missed"} it.` });
+    else if (GAAP_TALK.test(claim.quote)) {
+      parts.push({
+        verdict: "cant_check",
+        lead: `On the adjusted figures analysts use, earnings ${outcome === "beat" ? "beat" : "missed"} the estimate. The post is about the reported (GAAP) figure or a one-time item, which these estimates leave out, so the two can't be compared.`
+      });
+    } else parts.push({ verdict: "contradicted", lead: `Earnings ${outcome === "beat" ? "beat" : "missed"} the estimate. The post says they ${claim.vsEstimate === "beat" ? "beat" : "missed"} it.` });
     if (claim.claimedPercent !== null && q2.surprisePercent !== null && outcome && outcome !== "in_line") {
       const actual = Math.abs(q2.surprisePercent);
       const ok = Math.abs(claim.claimedPercent - actual) <= Math.max(SURPRISE_TIGHT_POINTS, actual * SURPRISE_TIGHT_RELATIVE);
@@ -2894,8 +3079,11 @@ function evaluateEarningsClaim(claim, evidence) {
       }
     }
   }
-  const worst = parts.reduce((a, b) => RANK[b.verdict] > RANK[a.verdict] ? b : a);
-  if (worst.verdict === "cant_check") return { verdict: "cant_check", reason: `${facts} There is no estimate to compare the post with.` };
+  const worst = parts.reduce((a, b) => RANK2[b.verdict] > RANK2[a.verdict] ? b : a);
+  if (worst.verdict === "cant_check") {
+    const why = parts.map((p) => p.lead).filter(Boolean).join(" ");
+    return { verdict: "cant_check", reason: why ? `${why} ${facts}${BASIS_NOTE}` : `${facts} There is no estimate to compare the post with.` };
+  }
   const lead = parts.filter((p) => p.lead && p.verdict === worst.verdict).map((p) => p.lead).join(" ");
   return { verdict: worst.verdict, reason: `${lead ? `${lead} ` : ""}${facts}${BASIS_NOTE}` };
 }
@@ -2964,6 +3152,9 @@ var HOURS = {
   dmh: "during market hours"
 };
 var PROVIDER_NOTE = " Consensus figures differ slightly between data providers.";
+var GUIDANCE = /\b(?:guid(?:e|ed|es|ance|ing)|forecast(?:s|ed|ing)?|outlook|management (?:expects?|sees|projects?)|the company (?:expects?|sees|projects?))\b/i;
+var FULL_YEAR = /\bFY\s?'?\d{2,4}E?\b|\bfull[- ]year\b|\bannual\b|\bfor the year\b|\b20\d\dE\b/i;
+var GAP = /\b(?:below|above|short of|ahead of|under|over)\s+(?:investor |analyst |wall street |street )?(?:expectations|estimates|consensus)\b|\b(?:beat|miss(?:ed)?|topped)\b[^.]{0,40}\bby\b/i;
 function reportWords(r, ticker) {
   const label = r.fiscalQuarter && r.fiscalYear ? `Q${r.fiscalQuarter} ${r.fiscalYear} ` : "";
   return `${ticker}'s ${label}report on ${formatDate(r.date)}${r.hour ? `, ${HOURS[r.hour]}` : ""}`;
@@ -2996,6 +3187,15 @@ function evaluateCalendarClaim(claim, evidence, today) {
     }
     const unknownHour = wantHour && (!report.hour || report.hour === "dmh") ? " The calendar doesn't say whether it is before the open or after the close." : "";
     return { verdict: "holds_up", reason: `${fact2}${unknownHour}` };
+  }
+  if (GUIDANCE.test(claim.quote)) {
+    return { verdict: "cant_check", reason: `This is the company's own forecast (guidance), not the analysts' consensus. Verifi doesn't check guidance yet.` };
+  }
+  if (claim.period === "year" || FULL_YEAR.test(claim.quote)) {
+    return { verdict: "cant_check", reason: `This is a full-year figure. The earnings calendar has the consensus for each quarter's report only. It has ${about}.` };
+  }
+  if (GAP.test(claim.quote)) {
+    return { verdict: "cant_check", reason: `The post gives how far the result was from expectations, not the consensus itself, so there is no figure to compare.` };
   }
   const eps = claim.metric === "eps";
   const consensus = eps ? report.epsEstimate : report.revenueEstimate;
@@ -3461,7 +3661,7 @@ function createSupabaseStore(env) {
 }
 
 // src/checker.ts
-var RESULT_VERSION = 9;
+var RESULT_VERSION = 10;
 var REUSE_FOR_MS = 6 * 60 * 60 * 1e3;
 var REUSE_MARKET_FOR_MS = 5 * 60 * 1e3;
 function reuseWindow(result) {

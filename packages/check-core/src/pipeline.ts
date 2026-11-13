@@ -1,7 +1,8 @@
 import type { EvidenceCache } from './cache';
-import { newYorkDate, parsePostDate, postDateInText } from './dates';
+import { addDays, newYorkDate, parsePostDate, postDateInText, redditAge, weekdayOf } from './dates';
 import type { ClaimExtractor } from './llm/types';
 import { normalizeTicker } from './llm/normalize';
+import { STALE_NOTE } from './sources/finnhub/marketSource';
 import { namesMatch } from './sources/sec/client';
 import type { CompanyDirectory, EvidenceSource } from './sources/types';
 import { cleanPostText, postTimestamp } from './text';
@@ -171,6 +172,9 @@ async function assignTickers(extracted: ExtractedClaim[], text: string, director
   // that is only the ticker ("$NVDA", "NBIS") names no company: keep it as the
   // ticker, or step 2 reads it as a second company and drops the ticker.
   const claims = extracted.map((c) => {
+    // "The S&P", "the Nasdaq": the index, tracked through its ETF, never S&P Global or Nasdaq Inc.
+    const index = indexEtf(c.company) ?? (c.ticker === 'SPGI' && /\bS&P\b(?!\s+Global)/i.test(c.quote) ? 'SPY' : null);
+    if (index) return { ...c, ticker: index, company: null };
     const asTicker = c.company && /^\$?[A-Z]{1,5}(?:[.-][A-Z])?$/.test(c.company.trim()) ? normalizeTicker(c.company.trim()) : null;
     const ticker = c.ticker ?? asTicker ?? postTickers(c.quote)[0] ?? null;
     return { ...c, ticker, company: asTicker && asTicker === ticker ? null : c.company };
@@ -216,6 +220,78 @@ async function assignTickers(extracted: ExtractedClaim[], text: string, director
   return claims;
 }
 
+const INDEX_ETFS: Array<[RegExp, string]> = [
+  [/^(?:the )?(?:s&p(?: 500)?|s&p500|spx)(?: index)?$/i, 'SPY'],
+  [/^(?:the )?nasdaq(?:[- ]100| composite)?(?: index)?$/i, 'QQQ'],
+  [/^(?:the )?dow(?: jones)?(?: industrial average)?$/i, 'DIA'],
+  [/^(?:the )?russell 2000$/i, 'IWM'],
+];
+
+function indexEtf(company: string | null): string | null {
+  const name = company?.trim();
+  return (name && INDEX_ETFS.find(([re]) => re.test(name))?.[1]) || null;
+}
+
+// "Over the past month", "in one month", "last 30 days": a rolling month, not month to date.
+const ROLLING_MONTH = /\b(?:past|last|over (?:the|a|one)|in (?:a|one)|one|same|prior)\s+month\b|\b(?:30|thirty) days\b/i;
+const MONTH_TO_DATE = /\b(?:this month|so far (?:this|in) \w+|month[- ]to[- ]date|mtd)\b/i;
+
+/** A "month" move the post measures over a rolling month becomes a 30-day span. */
+function rollingMonth<C extends ExtractedClaim>(c: C, text: string): C {
+  if (c.window !== 'month') return c;
+  // The claim's own words first; then the post's framing ("In one month, healthcare rose 11%").
+  const rolling = ROLLING_MONTH.test(c.quote) || (!MONTH_TO_DATE.test(c.quote) && ROLLING_MONTH.test(text));
+  return rolling ? { ...c, window: null, windowDays: 30 } : c;
+}
+
+/**
+ * Without a post date, "today" and "this week" mean the day of the check, which
+ * is only a guess. A mismatch then says nothing about the post: it may be days old.
+ */
+function undatedGuess(claim: Claim): boolean {
+  if (claim.postedAt) return false;
+  if (claim.type === 'earnings_date') return !claim.eventDate || !/\d/.test(claim.eventDate);
+  return shortMove(claim);
+}
+
+/** A price or market-value move over a month or less, which a day's error in the date can change. */
+function shortMove(claim: Claim): boolean {
+  if (claim.type !== 'price_move' && claim.type !== 'market_cap') return false;
+  return claim.window === 'day' || claim.window === 'week' || claim.window === 'month' || (claim.windowDays !== null && claim.windowDays <= 31) || claim.session !== null;
+}
+
+const APPROX_NOTE = " The post's date comes from Reddit's rounded age (\"13d ago\"), which can be a day late, so the post may be about the session before. Add the exact date to check it."
+
+// "An investment made ten years ago would be worth $7,800": a dollar value, not a share price.
+const INVESTMENT_VALUE = /\b(?:invest(?:ed|ment|ing)?|would be worth|would have|turned into|grown to)\b/i;
+
+/** Why a price claim is about something the price data can't show, or null. */
+function priceClaimMismatch(claim: Claim, text: string, today: string): string | null {
+  if (claim.type !== 'price_move' && claim.type !== 'market_cap') return null;
+  if (claim.type === 'price_move' && claim.claimedAmount !== null && claim.claimedPercent === null && INVESTMENT_VALUE.test(text)) {
+    return 'The figure looks like what an investment would be worth, not the share price, so there is no price to compare it with.';
+  }
+  // "2022 → -27.92%": one past calendar year, not the latest 52 weeks.
+  const year = claim.quote.match(/\b(19\d{2}|20\d{2})\b/)?.[1];
+  if (year && Number(year) < Number(today.slice(0, 4)) && !/\bsince\b/i.test(claim.quote)) {
+    return `This is about the move in ${year}. Verifi checks moves over recent spans, not past calendar years yet.`;
+  }
+  return null;
+}
+
+const WEEKDAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const SESSION_WEEKDAY = /\b(monday|tuesday|wednesday|thursday|friday)(?:'s|’s)?\s+(?:close|closes|closing|session|trading)\b|\b(?:on|rose|fell|dropped|jumped|closed)\s+(?:on\s+)?(monday|tuesday|wednesday|thursday|friday)\b/gi;
+
+/** The trading day a post names for its moves ("Monday's closes"), within the week before it. One day only. */
+function namedSession(text: string, postedAt: string): string | null {
+  const days = new Set([...text.matchAll(SESSION_WEEKDAY)].map((m) => (m[1] ?? m[2])!.toLowerCase()));
+  if (days.size !== 1) return null;
+  const target = WEEKDAY_NAMES.indexOf([...days][0]!);
+  return addDays(postedAt, -((weekdayOf(postedAt) - target + 7) % 7));
+}
+
+const UNDATED_NOTE = " The post has no date, so this compares with today. If it was written on another day, add the post's date to check it against that day.";
+
 /** True when the quote mentions the company by its identifying first word ("NVIDIA" in "NVIDIA CORP"). */
 function namesInQuote(name: string, quote: string): boolean {
   const word = name
@@ -260,8 +336,10 @@ export async function checkPost(postText: string, deps: CheckDeps, options: Chec
   }
   const now = deps.now?.() ?? new Date();
   const postedAt = resolvePostedAt(postText, options, now);
+  // A date from Reddit's rounded "13d ago" can be a day late: the session it points at is a guess.
+  const approxDate = !options.postedAt && !postTimestamp(postText) && Boolean(redditAge(postText.replace(/\r\n?/g, '\n'), now)?.approximate);
 
-  const extracted = dedupeClaims(await assignTickers(await deps.extractor.extractClaims(text), text, deps.directory));
+  const extracted = dedupeClaims((await assignTickers(await deps.extractor.extractClaims(text), text, deps.directory)).map((c) => rollingMonth(c, text)));
 
   const tickers = [...new Set(extracted.map((c) => c.ticker).filter((t): t is string => Boolean(t)))];
   const companies = [...new Set(extracted.map((c) => c.company).filter((t): t is string => Boolean(t)))];
@@ -269,11 +347,15 @@ export async function checkPost(postText: string, deps: CheckDeps, options: Chec
   const postCompany = companies[0] ?? null;
   const postPeriod = sharedPostPeriod(extracted, text);
 
+  const sessionDay = postedAt ? namedSession(text, postedAt) : null;
+
   // Claim ids whose year or quarter came from elsewhere in the post.
   const borrowed = new Set<string>();
   const claims: Claim[] = extracted.map((c, i) => {
     const id = `c${i + 1}`;
-    const claim: Claim = { ...c, id, postedAt };
+    // "Monday's closes: AMD +13%": a one-day move on the session the post names.
+    const dayMove = (c.type === 'price_move' || c.type === 'market_cap') && c.window === 'day' && !c.session;
+    const claim: Claim = { ...c, id, postedAt: dayMove && sessionDay ? sessionDay : postedAt };
     if (postPeriod && borrowsPeriod(c, postPeriod)) {
       borrowed.add(id);
       claim.fiscalYear = postPeriod.fiscalYear;
@@ -313,6 +395,9 @@ export async function checkPost(postText: string, deps: CheckDeps, options: Chec
     }
     if (claim.type === 'implied_move') return cant("An implied move comes from options prices, and Verifi doesn't have options data yet.");
 
+    const mismatch = priceClaimMismatch(claim, text, postedAt ?? newYorkDate(now));
+    if (mismatch) return cant(mismatch);
+
     // Without a ticker there are no filings to look up. This is the usual
     // result for private companies and for "leaked" documents.
     if (!claim.ticker) {
@@ -337,14 +422,30 @@ export async function checkPost(postText: string, deps: CheckDeps, options: Chec
     try {
       const evidence = await fetchEvidence(source, claim);
       if (!evidence) return cant(source.emptyReason?.(claim) ?? `No filing data found for ${claim.ticker}.`);
-      const { verdict, reason, citation } = source.evaluate(claim, evidence);
-      // Say so when the period was read from elsewhere in the post, so a
-      // reader can see why this year was used and not the latest one.
-      const fullReason =
-        borrowed.has(claim.id) && postPeriod && verdict !== 'cant_check'
-          ? `${reason} The post names ${periodLabel(postPeriod)} earlier, so this figure is checked against that period.`
-          : reason;
-      return { claim, verdict, reason: fullReason, evidence: citation ? { ...evidence, citation } : evidence };
+      const result = source.evaluate(claim, evidence);
+      const { citation } = result;
+      let { verdict, reason } = result;
+      const withEvidence = citation ? { ...evidence, citation } : evidence;
+      // A mismatch built on a guess (today's prices for an undated post, or a
+      // period read from elsewhere in the post) is no proof the post is wrong.
+      if (verdict === 'contradicted' && undatedGuess(claim)) {
+        return { claim, verdict: 'cant_check', reason: `${reason.replace(STALE_NOTE, '')}${UNDATED_NOTE}`, evidence: withEvidence };
+      }
+      if (verdict === 'contradicted' && approxDate && claim.postedAt === postedAt && shortMove(claim)) {
+        return { claim, verdict: 'cant_check', reason: `${reason}${APPROX_NOTE}`, evidence: withEvidence };
+      }
+      if (borrowed.has(claim.id) && postPeriod && verdict !== 'cant_check') {
+        // "From $28.6B in FY2023 to $303B": next to an old year, a bare figure is often about now.
+        const oldYear = postPeriod.fiscalYear !== null && postPeriod.fiscalYear < Number((postedAt ?? newYorkDate(now)).slice(0, 4)) - 1;
+        if (verdict === 'contradicted' && oldYear) {
+          verdict = 'cant_check';
+          reason = `${reason} This figure doesn't name its own period, so it was checked against ${periodLabel(postPeriod)}, named earlier in the post. It may be about another period.`;
+        } else {
+          // Say so, so a reader can see why this year was used and not the latest one.
+          reason = `${reason} The post names ${periodLabel(postPeriod)} earlier, so this figure is checked against that period.`;
+        }
+      }
+      return { claim, verdict, reason, evidence: withEvidence };
     } catch {
       // One source being down should not fail the whole check.
       return cant("Couldn't reach the data source. Try again in a minute.");

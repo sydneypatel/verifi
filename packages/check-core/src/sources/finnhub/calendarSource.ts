@@ -22,6 +22,13 @@ const HOURS: Record<NonNullable<CalendarReport['hour']>, string> = {
 
 const PROVIDER_NOTE = ' Consensus figures differ slightly between data providers.';
 
+// "Management forecasting $21.7B", "FY26 guide $920-950M": the company's own outlook.
+const GUIDANCE = /\b(?:guid(?:e|ed|es|ance|ing)|forecast(?:s|ed|ing)?|outlook|management (?:expects?|sees|projects?)|the company (?:expects?|sees|projects?))\b/i;
+// "FY27E EPS", "full-year revenue", "2027 consensus": not one quarter's report.
+const FULL_YEAR = /\bFY\s?'?\d{2,4}E?\b|\bfull[- ]year\b|\bannual\b|\bfor the year\b|\b20\d\dE\b/i;
+// "$1.1 billion below expectations", "beat estimates by $0.20": a gap, not the consensus.
+const GAP = /\b(?:below|above|short of|ahead of|under|over)\s+(?:investor |analyst |wall street |street )?(?:expectations|estimates|consensus)\b|\b(?:beat|miss(?:ed)?|topped)\b[^.]{0,40}\bby\b/i;
+
 function reportWords(r: CalendarReport, ticker: string): string {
   const label = r.fiscalQuarter && r.fiscalYear ? `Q${r.fiscalQuarter} ${r.fiscalYear} ` : '';
   return `${ticker}'s ${label}report on ${formatDate(r.date)}${r.hour ? `, ${HOURS[r.hour]}` : ''}`;
@@ -62,7 +69,16 @@ export function evaluateCalendarClaim(claim: Claim, evidence: CalendarEvidence, 
     return { verdict: 'holds_up', reason: `${fact}${unknownHour}` };
   }
 
-  // Consensus estimate.
+  // Consensus estimate. The calendar has the analysts' quarterly consensus only.
+  if (GUIDANCE.test(claim.quote)) {
+    return { verdict: 'cant_check', reason: `This is the company's own forecast (guidance), not the analysts' consensus. Verifi doesn't check guidance yet.` };
+  }
+  if (claim.period === 'year' || FULL_YEAR.test(claim.quote)) {
+    return { verdict: 'cant_check', reason: `This is a full-year figure. The earnings calendar has the consensus for each quarter's report only. It has ${about}.` };
+  }
+  if (GAP.test(claim.quote)) {
+    return { verdict: 'cant_check', reason: `The post gives how far the result was from expectations, not the consensus itself, so there is no figure to compare.` };
+  }
   const eps = claim.metric === 'eps';
   const consensus = eps ? report.epsEstimate : report.revenueEstimate;
   const claimed = claim.claimedAmount;

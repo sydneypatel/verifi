@@ -26,8 +26,22 @@ export function isPersonal(quote: string): boolean {
 const EARNINGS_WORDS = /\b(?:earnings|eps|per share|profit|bottom line|results|numbers|estimates|expectations|consensus|the street)\b/i;
 const OTHER_MEASURE = /\b(?:revenue|revenues|sales|top line|guidance|outlook|forecast|margin|margins|cash flow|fcf|users|subscribers|deliveries|bookings)\b/i;
 
+// "Net income up 31%", "CapEx up 70%", "ad prices +14%": growth in something other than revenue.
+const REVENUE_WORDS = /\b(?:revenues?|sales|top[- ]?line|turnover)\b/i;
+const NOT_REVENUE =
+  /\b(?:net income|income|profits?|earnings|eps|capex|capital expenditures?|spending|cash flow|fcf|rpo|remaining performance|backlog|bookings|impressions|prices?|pricing|users|subscribers|deliveries|shipments|margins?|ebitda|dau|mau|arpu|units|volumes?|headcount|orders)\b/i;
+// "Growth slowed to 23%": revenue still grew, just less quickly.
+const SLOWED = /\b(?:slow(?:ed|ing|s)?|decelerat\w*|cool(?:ed|ing)|moderat\w*)\b/i;
+const FELL = /\b(?:fell|fall(?:ing|s)?|declin\w*|drop\w*|shr[aiu]nk\w*|contract\w*|down)\b/i;
+
 // Segment names that are really the whole company.
 const NOT_A_SEGMENT = /^(?:total|overall|company|consolidated|revenue|revenues|sales|net sales|top line|headline|group|all)$/i;
+
+/** "Its $46.75 high" names no span: only "all-time", "record" or "ever" make it the all-time high. */
+function referenceOf(ref: (typeof PRICE_REFERENCES)[number] | null, quote: string): (typeof PRICE_REFERENCES)[number] | null {
+  if (ref === 'high_all_time' && !/\ball[- ]time\b|\brecord\b|\bever\b|\bath\b|\bpeak\b/i.test(quote)) return 'high';
+  return ref;
+}
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -73,8 +87,11 @@ export function normalizeClaims(raw: unknown): ExtractedClaim[] {
     if (type !== 'prediction' && type !== 'consensus_estimate' && UPSIDE.test(quote)) type = 'prediction';
     else if (type !== 'personal' && isPersonal(quote)) type = 'personal';
 
+    if (type === 'revenue_growth' && !REVENUE_WORDS.test(quote) && NOT_REVENUE.test(quote)) type = 'other';
+
     const percent = asNumber(row.claimedPercent);
-    const direction: Direction | null = oneOf(row.direction, ['up', 'down'] as const);
+    let direction: Direction | null = oneOf(row.direction, ['up', 'down'] as const);
+    if (type === 'revenue_growth' && direction === 'down' && SLOWED.test(quote) && !FELL.test(quote)) direction = 'up';
     const period: Period | null = oneOf(row.period, ['quarter', 'year'] as const);
 
     // Which measure: only means something on a dollar-figure or earnings claim.
@@ -123,7 +140,7 @@ export function normalizeClaims(raw: unknown): ExtractedClaim[] {
       window,
       windowDays: days !== null && days > 0 ? Math.round(days) : null,
       session: type === 'price_move' || type === 'earnings_date' ? oneOf(row.session, SESSIONS) : null,
-      reference: type === 'price_move' ? oneOf(row.reference, PRICE_REFERENCES) : null,
+      reference: type === 'price_move' ? referenceOf(oneOf(row.reference, PRICE_REFERENCES), quote) : null,
       comparison: type === 'revenue_growth' || type === 'earnings_result' ? oneOf(row.comparison, COMPARISONS) : null,
       segment: segment && !NOT_A_SEGMENT.test(segment) ? segment : null,
       eventDate: type === 'earnings_date' ? asString(row.eventDate)?.slice(0, 40) ?? null : null,

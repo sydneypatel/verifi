@@ -37,7 +37,7 @@ export function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS);
 }
 
-function weekdayOf(iso: string): number {
+export function weekdayOf(iso: string): number {
   return new Date(`${iso}T00:00:00Z`).getUTCDay();
 }
 
@@ -115,7 +115,23 @@ const DATE_LINE_NOISE = /^(?:\d{1,2}:\d{2}(?::\d{2})?\s?(?:am|pm)?(?:\s?[a-z]{2,
  * inside a claim ("revenue for the quarter ended Sep 30, 2026") is never taken.
  * Returns the New York day, or null.
  */
+/**
+ * A copied Reddit header ("r/investing", "•", "2d ago", "u/name"): there the
+ * relative age is the post's, so it is trusted even though it stands alone.
+ * Reddit rounds ages down, so an age in days or weeks can put the post a day
+ * (or more) later than it was: approximate is then true.
+ */
+export function redditAge(text: string, now: Date): { day: string; approximate: boolean } | null {
+  const head = text.split(/\n/).map((l) => l.trim()).filter(Boolean).slice(0, 6);
+  if (!head.some((l) => /^r\/\w+$/i.test(l))) return null;
+  const age = head.map((l) => l.replace(/^[·•]\s*/, '')).find((l) => /^\d+\s?(?:m|min|h|hr|d|w)\s+ago$/i.test(l));
+  const day = age ? parsePostDate(age, now) : null;
+  return day ? { day, approximate: /\d\s?[dw]\s/i.test(age!) } : null;
+}
+
 export function postDateInText(text: string, now: Date): string | null {
+  const reddit = redditAge(text, now);
+  if (reddit) return reddit.day;
   const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
   const candidates = [...lines.slice(-3).reverse(), ...lines.slice(0, 3)];
   for (const line of candidates) {

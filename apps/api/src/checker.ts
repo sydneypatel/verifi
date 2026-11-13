@@ -42,7 +42,9 @@ import { createSupabaseStore, hashPost, type CheckSource, type CheckStore } from
 // 6: price claims from past days, from Alpaca price history.
 // 7: a date line in the post ("Nov 9th 2026") sets the post date.
 // 8: consensus estimates and earnings dates checked against Finnhub's earnings calendar.
-export const RESULT_VERSION = 9;
+// 9: claims whose company is only the cashtag keep their ticker.
+// 10: false "Contradicted" verdicts: guessed dates and periods, other measures, guidance, GAAP misses.
+export const RESULT_VERSION = 10;
 
 // A saved result is reused for the same post for this long (matches the SEC evidence cache).
 const REUSE_FOR_MS = 6 * 60 * 60 * 1000;

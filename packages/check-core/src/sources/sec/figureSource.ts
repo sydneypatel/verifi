@@ -4,7 +4,7 @@ import type { Evaluation, EvidenceSource } from '../types';
 import { SecClient, filingUrl } from './client';
 import { newestFiling, withRelease, type EarningsReleases } from './releases';
 import { REVENUE_CONCEPTS } from './revenueFacts';
-import { isQuarter, isYear, latestNamedQuarter, notFiledYet, onFileBy, periodWords, quarterAfter, toReported, yearAfter } from './periods';
+import { isYear, namedQuarters, notFiledYet, upcomingNamedQuarter, onFileBy, periodWords, quarterAfter, toReported, yearAfter } from './periods';
 import { buildSeries } from './series';
 
 // Checks dollar figures a post says a company reported: "Q2 revenue of $11.5B",
@@ -77,7 +77,7 @@ function resolvePeriods(
 
   if (granularity === 'quarter') {
     if (claim.fiscalQuarter && claim.fiscalYear) {
-      const targets = evidence.quarters.filter((q) => isQuarter(q, claim.fiscalYear!, claim.fiscalQuarter!));
+      const targets = namedQuarters(evidence.quarters, claim.fiscalQuarter, claim.fiscalYear, claim.quote);
       const named = `Q${claim.fiscalQuarter} ${claim.fiscalYear}`;
       if (targets.length === 0) {
         return quarterAfter(evidence.quarters[0], claim.fiscalYear, claim.fiscalQuarter)
@@ -87,8 +87,8 @@ function resolvePeriods(
       return { targets, alternates: some(latestYear) };
     }
     if (claim.fiscalQuarter) {
-      const named = latestNamedQuarter(quarters, claim.fiscalQuarter);
-      if (named) return { targets: some(named), alternates: some(latestYear) };
+      const named = namedQuarters(quarters, claim.fiscalQuarter, null, claim.quote);
+      if (named.length) return { targets: named, alternates: some(latestYear) };
     }
     return { targets: some(latestQuarter), alternates: some(latestYear) };
   }
@@ -116,6 +116,9 @@ export function evaluateFigureClaim(claim: Claim, evidence: FigureEvidence): Eva
   const claimed = claim.claimedAmount;
   if (claimed === null) return { verdict: 'cant_check', reason: "The post doesn't give a dollar amount to compare." };
 
+  if (/\b(?:non[- ]?gaap|adjusted|adj\.?|ex[- ]items|excluding)\b/i.test(claim.quote)) {
+    return { verdict: 'cant_check', reason: 'This is an adjusted (non-GAAP) figure. SEC filings report the standard GAAP figure, which leaves nothing like-for-like to compare.' };
+  }
   const { targets, alternates, missing, notFiled } = resolvePeriods(claim, evidence);
   if (notFiled) return { verdict: 'cant_check', reason: notFiledYet(notFiled, evidence.quarters[0] ?? evidence.years[0], evidence.ticker) };
   if (targets.length === 0) {
@@ -167,6 +170,24 @@ export function evaluateFigureClaim(claim: Claim, evidence: FigureEvidence): Eva
   if (sameSign && within(claimed, nearest.value, LOOSE)) {
     const how = Math.abs(claimed) > Math.abs(nearest.value) ? 'overstated' : 'understated';
     return { verdict: 'misleading', reason: `Close, but ${how}. ${actual}`, citation };
+  }
+
+  const upcoming = claim.fiscalQuarter && !claim.fiscalYear ? upcomingNamedQuarter(onFileBy(evidence.quarters, claim.postedAt), claim.fiscalQuarter) : null;
+  if (upcoming) {
+    return { verdict: 'cant_check', reason: `${notFiledYet(upcoming, evidence.quarters[0], evidence.ticker)} The post is likely about ${upcoming}, not the Q${claim.fiscalQuarter} a year earlier.` };
+  }
+
+  // No period and no post date: "the latest" is only a guess. A figure that
+  // matches an earlier period is more likely an older post than a false one.
+  if (!claim.postedAt && !claim.fiscalQuarter && !claim.fiscalYear) {
+    const older = [...evidence.quarters.slice(1, 13), ...evidence.years.slice(1, 4)].find((p) => within(claimed, p.value, TIGHT));
+    if (older) {
+      return {
+        verdict: 'cant_check',
+        reason: `The company reported ${reported(older)}, which matches. The post has no date, so it may be about that period. Add the post's date to check it against the latest figures at the time.`,
+        citation: citationFor(evidence, older),
+      };
+    }
   }
 
   return { verdict: 'contradicted', reason: `${actual} The post says ${claimedText}.`, citation };

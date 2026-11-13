@@ -31,9 +31,48 @@ export function isQuarter(q: ReportedPeriod, year: number, quarter: number): boo
   return (q.fiscalYear === year && q.fiscalQuarter === quarter) || (calendar.year === year && calendar.quarter === quarter);
 }
 
-/** "Q2" with no year: the most recent quarter with that label, fiscal or calendar. */
-export function latestNamedQuarter(quarters: ReportedPeriod[], quarter: number): ReportedPeriod | undefined {
-  return quarters.find((q) => q.fiscalQuarter === quarter || calendarOf(q).quarter === quarter);
+/**
+ * A quarter's fiscal label. A quarter read from an earnings release can come
+ * without one: it is then the quarter after the next older labelled one.
+ */
+function fiscalLabel(quarters: ReportedPeriod[], i: number): { year: number; quarter: number } | null {
+  const q = quarters[i]!;
+  if (q.fiscalQuarter && q.fiscalYear) return { year: q.fiscalYear, quarter: q.fiscalQuarter };
+  const prev = quarters[i + 1];
+  if (!prev?.fiscalQuarter || !prev.fiscalYear) return null;
+  const gapDays = (toTime(q.end) - toTime(prev.end)) / 86_400_000;
+  if (gapDays < 80 || gapDays > 100) return null;
+  return prev.fiscalQuarter === 4 ? { year: prev.fiscalYear + 1, quarter: 1 } : { year: prev.fiscalYear, quarter: prev.fiscalQuarter + 1 };
+}
+
+/**
+ * "Q3" with no year, when the next quarter to be filed is a Q3: the post is
+ * likely about that one (just reported, not filed yet), not last year's.
+ */
+export function upcomingNamedQuarter(quarters: ReportedPeriod[], quarter: number): string | null {
+  const newest = quarters.length ? fiscalLabel(quarters, 0) : null;
+  if (!newest) return null;
+  const next = newest.quarter === 4 ? { year: newest.year + 1, quarter: 1 } : { year: newest.year, quarter: newest.quarter + 1 };
+  return next.quarter === quarter ? `Q${next.quarter} ${next.year}` : null;
+}
+
+/**
+ * Every quarter "Q2 2026" (or "Q2" with no year: the latest such) could mean:
+ * the company's fiscal Q2 and the calendar Q2, which differ for companies whose
+ * fiscal year doesn't start in January. A post that says "fiscal" or "FY" means
+ * the fiscal label only. Newest first, no duplicates.
+ */
+export function namedQuarters(quarters: ReportedPeriod[], quarter: number, year: number | null, quote = ''): ReportedPeriod[] {
+  const fiscal = quarters.find((q, i) => {
+    const label = fiscalLabel(quarters, i);
+    return label?.quarter === quarter && (year === null || label.year === year);
+  });
+  if (/\bfiscal\b|\bFY\s?'?\d/i.test(quote)) return fiscal ? [fiscal] : [];
+  const calendar = quarters.find((q) => {
+    const c = calendarOf(q);
+    return c.quarter === quarter && (year === null || c.year === year);
+  });
+  return [...new Set([fiscal, calendar].filter((q): q is ReportedPeriod => Boolean(q)))].sort((a, b) => b.end.localeCompare(a.end));
 }
 
 export function isYear(y: ReportedPeriod, year: number): boolean {
